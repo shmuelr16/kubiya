@@ -23,6 +23,16 @@ const SENSITIVITY := 0.0025
 const TOUCH_SENSITIVITY := 0.006
 const SKIN := 0.001
 const STEP_LENGTH := 2.2
+const MAX_HEALTH := 20.0
+const MAX_HUNGER := 20.0
+## Blocks of free fall before a landing hurts.
+const SAFE_FALL := 3.0
+const HUNGER_PERIOD := 28.0
+const REGEN_PERIOD := 3.0
+const STARVE_PERIOD := 4.0
+
+signal hurt_taken
+signal died
 
 var world: Node3D
 var touch: Control
@@ -40,8 +50,18 @@ var input_enabled := true
 ## A menu is open: the player stands still and ignores input.
 var ui_open := false
 
+var health := MAX_HEALTH
+var hunger := MAX_HUNGER
+var deaths := 0
+var spawn_point := Vector3.ZERO
+
 var _step_acc := 0.0
 var _fall_speed := 0.0
+var _peak_y := 0.0
+var _knock := Vector3.ZERO
+var _regen_t := 0.0
+var _starve_t := 0.0
+var _sprinting := false
 
 
 func _ready() -> void:
@@ -106,7 +126,8 @@ func _physics_process(delta: float) -> void:
 	if in_water and not was_in_water and vel.y < -4.0:
 		_sound("splash", randf_range(0.9, 1.1), -4.0)
 
-	var speed := SPRINT if _down(KEY_SHIFT) else SPEED
+	_sprinting = _down(KEY_SHIFT) and input != Vector2.ZERO
+	var speed := SPRINT if _sprinting else SPEED
 	if in_water:
 		speed *= 0.6
 		vel.y = move_toward(vel.y, -SINK, 14.0 * delta)
@@ -118,12 +139,20 @@ func _physics_process(delta: float) -> void:
 		# Touch has no spare finger for jumping while walking: hop up steps automatically.
 		if on_floor and (jump or (using_touch and blocked)):
 			vel.y = JUMP
-	vel.x = dir.x * speed
-	vel.z = dir.z * speed
+	vel.x = dir.x * speed + _knock.x
+	vel.z = dir.z * speed + _knock.z
+	_knock = _knock.move_toward(Vector3.ZERO, 24.0 * delta)
 
 	var was_on_floor := on_floor
 	_fall_speed = -vel.y
+	_peak_y = maxf(_peak_y, position.y)
 	_move(delta)
+	if on_floor or in_water:
+		var fallen := _peak_y - position.y
+		_peak_y = position.y
+		if on_floor and not was_on_floor and not in_water and fallen > SAFE_FALL + 0.5:
+			hurt(floorf(fallen - SAFE_FALL))
+	stats_step(delta)
 
 	if on_floor:
 		var below := world.get_block(floori(position.x), floori(position.y - 0.5), floori(position.z)) as int
@@ -135,6 +164,56 @@ func _physics_process(delta: float) -> void:
 		if _step_acc > STEP_LENGTH:
 			_step_acc = 0.0
 			_sound("step", pitch * randf_range(0.9, 1.1), -10.0)
+
+
+## Takes damage. `knock` pushes the player (blocks per second).
+func hurt(amount: float, knock := Vector3.ZERO) -> void:
+	if amount <= 0.0 or health <= 0.0:
+		return
+	health = maxf(health - amount, 0.0)
+	_knock = Vector3(knock.x, 0.0, knock.z)
+	if knock.y > 0.0 and on_floor:
+		vel.y = knock.y
+	_sound("hit", 0.7, -3.0)
+	hurt_taken.emit()
+	if health <= 0.0:
+		_die()
+
+
+func eat(points: int) -> void:
+	hunger = minf(hunger + points, MAX_HUNGER)
+
+
+## Hunger drains with time, faster while sprinting. A full stomach heals,
+## an empty one hurts down to one point of health.
+func stats_step(delta: float) -> void:
+	hunger = maxf(hunger - delta / HUNGER_PERIOD * (3.0 if _sprinting else 1.0), 0.0)
+	if hunger >= 17.0 and health < MAX_HEALTH:
+		_regen_t += delta
+		if _regen_t >= REGEN_PERIOD:
+			_regen_t = 0.0
+			health = minf(health + 1.0, MAX_HEALTH)
+			hunger = maxf(hunger - 0.3, 0.0)
+	else:
+		_regen_t = 0.0
+	if hunger <= 0.0 and health > 1.0:
+		_starve_t += delta
+		if _starve_t >= STARVE_PERIOD:
+			_starve_t = 0.0
+			hurt(1.0)
+	else:
+		_starve_t = 0.0
+
+
+func _die() -> void:
+	deaths += 1
+	died.emit()
+	position = spawn_point
+	vel = Vector3.ZERO
+	_knock = Vector3.ZERO
+	_peak_y = position.y
+	health = MAX_HEALTH
+	hunger = MAX_HUNGER
 
 
 ## True when the player's box overlaps the given block cell.

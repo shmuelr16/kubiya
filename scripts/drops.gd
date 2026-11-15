@@ -17,12 +17,13 @@ const SHADER := "
 shader_type spatial;
 render_mode unshaded, cull_disabled;
 uniform sampler2D atlas : source_color, filter_nearest, repeat_disable;
+global uniform float daylight;
 void fragment() {
 	vec4 t = texture(atlas, UV);
 	if (t.a < 0.5) {
 		discard;
 	}
-	ALBEDO = t.rgb * COLOR.rgb;
+	ALBEDO = t.rgb * COLOR.rgb * clamp(daylight, 0.25, 1.0);
 }
 "
 

@@ -13,6 +13,10 @@ const Mesher := preload("res://scripts/mesher.gd")
 const CS := 16
 const SY := 128
 const UPLOAD_BUDGET_USEC := 3000
+## How far from a chunk border a sky-light change still re-meshes the neighbour.
+const LIGHT_REACH := 4
+## Same, for an edit near torches. Less than the torch range, to limit re-meshing.
+const TORCH_EDIT_REACH := 6
 
 enum { S_GENERATING, S_DATA, S_MESHING, S_READY }
 
@@ -20,9 +24,11 @@ const SOLID_SHADER := "
 shader_type spatial;
 render_mode unshaded, cull_back;
 uniform sampler2D atlas : source_color, filter_nearest, repeat_disable;
-uniform float daylight = 1.0;
+global uniform float daylight;
 void fragment() {
-	ALBEDO = texture(atlas, UV).rgb * COLOR.rgb * daylight;
+	// COLOR: r = face shade, g = sky light, b = block light.
+	float light = max(max(COLOR.g * daylight, COLOR.b), 0.07);
+	ALBEDO = texture(atlas, UV).rgb * COLOR.r * light;
 }
 "
 
@@ -30,9 +36,9 @@ const WATER_SHADER := "
 shader_type spatial;
 render_mode unshaded, cull_disabled, blend_mix, depth_draw_never;
 uniform vec3 tint : source_color = vec3(0.16, 0.42, 0.78);
-uniform float daylight = 1.0;
+global uniform float daylight;
 void fragment() {
-	ALBEDO = tint * daylight;
+	ALBEDO = tint * max(max(COLOR.g * daylight, COLOR.b), 0.07);
 	ALPHA = 0.68;
 }
 "
@@ -75,6 +81,8 @@ var _uploads := []
 var _dirty: Array[Vector2i] = []
 ## Edited chunks, kept after unload: Vector2i -> [data, max_y].
 var _modified := {}
+## Torch cells per chunk, as chunk-layout indices: Vector2i -> PackedInt32Array.
+var _torches := {}
 var _mutex := Mutex.new()
 
 
@@ -158,20 +166,64 @@ func set_block(x: int, y: int, z: int, id: int) -> bool:
 	var lz := z & 15
 	# Copy on edit: a worker thread may still be reading the old array.
 	var d := c.data.duplicate()
-	d[((lx + lz * CS) << 7) + y] = id
+	var index := ((lx + lz * CS) << 7) + y
+	var old := d[index]
+	d[index] = id
 	c.data = d
 	c.max_y = maxi(c.max_y, y)
 	_modified[pos] = [d, c.max_y]
-	_mark_dirty(pos)
-	if lx == 0:
-		_mark_dirty(pos + Vector2i(-1, 0))
-	elif lx == 15:
-		_mark_dirty(pos + Vector2i(1, 0))
-	if lz == 0:
-		_mark_dirty(pos + Vector2i(0, -1))
-	elif lz == 15:
-		_mark_dirty(pos + Vector2i(0, 1))
+
+	var torch_changed := id == Blocks.TORCH or old == Blocks.TORCH
+	if torch_changed:
+		var list: PackedInt32Array = _torches.get(pos, PackedInt32Array())
+		var at := list.find(index)
+		if id == Blocks.TORCH and at == -1:
+			list.append(index)
+		elif id != Blocks.TORCH and at != -1:
+			list.remove_at(at)
+		_torches[pos] = list
+
+	# Re-mesh every chunk the change can reach: geometry reaches 1 block,
+	# sky light a few blocks, torch light its full range.
+	var reach := 1
+	if torch_changed:
+		reach = Mesher.TORCH_LIGHT
+	elif _torch_near(pos):
+		reach = TORCH_EDIT_REACH
+	elif Blocks.SEE_THROUGH[id] != Blocks.SEE_THROUGH[old]:
+		reach = LIGHT_REACH
+	var x0 := -1 if lx < reach else 0
+	var x1 := 1 if lx > 15 - reach else 0
+	var z0 := -1 if lz < reach else 0
+	var z1 := 1 if lz > 15 - reach else 0
+	for dz in range(z0, z1 + 1):
+		for dx in range(x0, x1 + 1):
+			_mark_dirty(pos + Vector2i(dx, dz))
 	return true
+
+
+func _torch_near(pos: Vector2i) -> bool:
+	for dz in range(-1, 2):
+		for dx in range(-1, 2):
+			var list: PackedInt32Array = _torches.get(pos + Vector2i(dx, dz), PackedInt32Array())
+			if not list.is_empty():
+				return true
+	return false
+
+
+## Torches of a chunk and its 8 neighbours, as x, y, z triples local to the chunk.
+func _torches_for(pos: Vector2i) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if _torches.is_empty():
+		return out
+	for dz in range(-1, 2):
+		for dx in range(-1, 2):
+			var list: PackedInt32Array = _torches.get(pos + Vector2i(dx, dz), PackedInt32Array())
+			for index in list:
+				out.append(((index >> 7) & 15) + dx * CS)
+				out.append(index & 127)
+				out.append((index >> 11) + dz * CS)
+	return out
 
 
 func _mark_dirty(pos: Vector2i) -> void:
@@ -204,7 +256,7 @@ func _remesh() -> void:
 		c.dirty = false
 		c.meshing = true
 		_dirty.erase(pos)
-		_start(_job_mesh.bind(pos, c.data, nx.data, px.data, nz.data, pz.data, c.max_y), true)
+		_start(_job_mesh.bind(pos, c.data, nx.data, px.data, nz.data, pz.data, c.max_y, _torches_for(pos)), true)
 
 
 ## Block id at a world position, or -1 when the chunk is not loaded yet.
@@ -259,7 +311,7 @@ func _schedule() -> void:
 			if _active >= max_tasks:
 				break
 			c.state = S_MESHING
-			_start(_job_mesh.bind(pos, c.data, nx.data, px.data, nz.data, pz.data, c.max_y))
+			_start(_job_mesh.bind(pos, c.data, nx.data, px.data, nz.data, pz.data, c.max_y, _torches_for(pos)))
 		elif c.state != S_READY:
 			all_done = false
 	_pending = not all_done
@@ -299,8 +351,9 @@ func _job_gen(pos: Vector2i) -> void:
 
 
 func _job_mesh(pos: Vector2i, d: PackedByteArray, nx: PackedByteArray,
-		px: PackedByteArray, nz: PackedByteArray, pz: PackedByteArray, max_y: int) -> void:
-	var r := Mesher.new().build(d, nx, px, nz, pz, max_y)
+		px: PackedByteArray, nz: PackedByteArray, pz: PackedByteArray, max_y: int,
+		torches: PackedInt32Array) -> void:
+	var r := Mesher.new().build(d, nx, px, nz, pz, max_y, torches)
 	_mutex.lock()
 	_results.append([1, pos, r])
 	_mutex.unlock()
@@ -368,6 +421,7 @@ func _build_node(c: Chunk, pos: Vector2i, m: Dictionary) -> void:
 		var a := []
 		a.resize(Mesh.ARRAY_MAX)
 		a[Mesh.ARRAY_VERTEX] = wv
+		a[Mesh.ARRAY_COLOR] = m["wc"]
 		a[Mesh.ARRAY_INDEX] = m["wi"]
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
 		mesh.surface_set_material(mesh.get_surface_count() - 1, _mat_water)

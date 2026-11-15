@@ -14,6 +14,8 @@ const STONE_PICK := 106
 const STONE_AXE := 107
 const STONE_SHOVEL := 108
 const STONE_SWORD := 109
+const MEAT := 110
+const FRUIT := 111
 
 const STACK := 64
 const DURABILITY: PackedInt32Array = [0, 60, 132]
@@ -37,6 +39,26 @@ static func tool_type(id: int) -> int:
 static func tool_tier(id: int) -> int:
 	@warning_ignore("integer_division")
 	return (id - WOOD_PICK) / 4 + 1 if is_tool_item(id) else 0
+
+
+## Hunger points restored by eating the item. 0: not food.
+static func food_points(id: int) -> int:
+	match id:
+		MEAT:
+			return 6
+		FRUIT:
+			return 3
+	return 0
+
+
+## Damage of one hit on a creature with the item in hand.
+static func attack_damage(id: int) -> int:
+	match tool_type(id):
+		0:
+			return 1
+		4:
+			return 3 + tool_tier(id)
+	return 2
 
 
 static func max_durability(id: int) -> int:
@@ -71,7 +93,10 @@ static func drop_for(block: int, held: int) -> Array:
 		Blocks.COAL:
 			return [COAL_LUMP, 1]
 		Blocks.LEAVES:
-			return [STICK, 1] if randf() < 0.2 else []
+			var roll := randf()
+			if roll < 0.2:
+				return [STICK, 1]
+			return [FRUIT, 1] if roll < 0.32 else []
 	return [block, 1]
 
 

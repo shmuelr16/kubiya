@@ -10,6 +10,8 @@ extends Node3D
 ##   --fly=SPEED        with --pos: move the camera along +X (blocks per second)
 ##   --cave             put the fixed camera inside the nearest cave
 ##   --nothreads        force the single-threaded loader (as on web)
+##   --time=T           freeze the clock: 0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight
+##   --nomobs           no natural creature spawning
 
 const Blocks := preload("res://scripts/blocks.gd")
 const World := preload("res://scripts/world.gd")
@@ -22,11 +24,13 @@ const GameAudio := preload("res://scripts/audio.gd")
 const Inventory := preload("res://scripts/inventory.gd")
 const InventoryUI := preload("res://scripts/inventory_ui.gd")
 const Drops := preload("res://scripts/drops.gd")
+const DayNight := preload("res://scripts/daynight.gd")
+const Mobs := preload("res://scripts/mobs.gd")
+const StatusHUD := preload("res://scripts/status_hud.gd")
 const SelfTest := preload("res://scripts/selftest.gd")
 
-const FOG_COLOR := Color(0.70, 0.84, 0.96)
-const HELP := "Click: capture mouse  |  WASD: move  |  Space: jump / swim  |  Shift: run  |  " \
-		+ "Hold left: mine  |  Right: place / use  |  1-9 / wheel: slot  |  E: inventory  |  M: music  |  Esc: release"
+const HELP := "Click: capture mouse  |  WASD: move  |  Space: jump / swim  |  Shift: run  |  Esc: release\n" \
+		+ "Hold left: mine / hit  |  Right: place / use / eat  |  1-9 / wheel: slot  |  E: inventory  |  M: music"
 
 var world: Node3D
 var player: Node3D
@@ -36,6 +40,10 @@ var hotbar: Control
 var inventory: RefCounted
 var inventory_ui: Control
 var drops: Node3D
+var daynight: Node3D
+var mobs: Node3D
+var status: Control
+var environment: Environment
 var touch: Control
 var hud: Label
 var help: Label
@@ -51,6 +59,9 @@ func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		var kv := arg.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else ""
+
+	# Shaders read this global value, so it must exist before any of them compiles.
+	RenderingServer.global_shader_parameter_add("daylight", RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 1.0)
 
 	audio = GameAudio.new()
 	audio.name = "Audio"
@@ -85,6 +96,20 @@ func _ready() -> void:
 	add_child(drops)
 
 	_build_sky()
+	if args.has("time"):
+		daynight.set_time(float(args["time"]))
+		daynight.paused = true
+
+	mobs = Mobs.new()
+	mobs.name = "Mobs"
+	mobs.world = world
+	mobs.player = player
+	mobs.drops = drops
+	mobs.audio = audio
+	mobs.daynight = daynight
+	mobs.auto_spawn = not args.has("nomobs")
+	add_child(mobs)
+
 	_build_hud()
 	player.touch = touch
 
@@ -97,6 +122,7 @@ func _ready() -> void:
 	interaction.audio = audio
 	interaction.inventory = inventory
 	interaction.drops = drops
+	interaction.mobs = mobs
 	interaction.workbench_used.connect(open_inventory.bind(3))
 	add_child(interaction)
 
@@ -172,9 +198,10 @@ func _process(delta: float) -> void:
 	if touch.bag_pressed:
 		touch.bag_pressed = false
 		open_inventory(2)
-	hud.text = "Kubiya 0.4  |  %d FPS  |  %d chunks  |  %dk quads  |  %d, %d, %d" % [
+	var hours := fposmod(daynight.time * 24.0 + 6.0, 24.0)
+	hud.text = "Kubiya 0.5  |  %d FPS  |  %d chunks  |  %dk quads  |  %d, %d, %d  |  %02d:%02d" % [
 		Engine.get_frames_per_second(), world.chunks.size(), world.total_quads / 1000.0,
-		floori(p.x), floori(p.y), floori(p.z)]
+		floori(p.x), floori(p.y), floori(p.z), int(hours), int(fposmod(hours, 1.0) * 60.0)]
 
 
 ## First dry column east of the origin.
@@ -206,33 +233,30 @@ func _try_spawn() -> void:
 	while y > 0 and not world.is_solid(x, y, z):
 		y -= 1
 	player.position.y = y + 1.0
+	player.spawn_point = player.position
 	player.frozen = false
 
 
 func _build_sky() -> void:
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.25, 0.50, 0.90)
-	sky_mat.sky_horizon_color = FOG_COLOR
-	sky_mat.ground_horizon_color = FOG_COLOR
-	sky_mat.ground_bottom_color = FOG_COLOR
-	var sky := Sky.new()
-	sky.sky_material = sky_mat
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color.WHITE
-	# Fog hides the edge of the loaded area.
+	environment = Environment.new()
+	environment.background_mode = Environment.BG_COLOR
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color.WHITE
+	# Fog hides the edge of the loaded area. The sky dome sets its colour.
 	var far: float = world.view_dist * 16.0
-	env.fog_enabled = true
-	env.fog_mode = Environment.FOG_MODE_DEPTH
-	env.fog_light_color = FOG_COLOR
-	env.fog_depth_begin = far * 0.6
-	env.fog_depth_end = far - 8.0
-	env.fog_sky_affect = 0.0
+	environment.fog_enabled = true
+	environment.fog_mode = Environment.FOG_MODE_DEPTH
+	environment.fog_depth_begin = far * 0.6
+	environment.fog_depth_end = far - 8.0
 	var we := WorldEnvironment.new()
-	we.environment = env
+	we.environment = environment
 	add_child(we)
+
+	daynight = DayNight.new()
+	daynight.name = "DayNight"
+	daynight.environment = environment
+	daynight.camera = player.cam
+	add_child(daynight)
 
 
 func _build_hud() -> void:
@@ -266,6 +290,12 @@ func _build_hud() -> void:
 	hotbar.atlas = world.atlas
 	hotbar.inventory = inventory
 	layer.add_child(hotbar)
+
+	status = StatusHUD.new()
+	status.player = player
+	status.hotbar = hotbar
+	status.atlas = world.atlas
+	layer.add_child(status)
 
 	touch = TouchUI.new()
 	touch.hotbar = hotbar
@@ -305,6 +335,11 @@ func _screenshot(path: String) -> void:
 
 func save_png(path: String) -> int:
 	await RenderingServer.frame_post_draw
+	return get_viewport().get_texture().get_image().save_png(path)
+
+
+## Saves the frame that is already on screen. Does not wait, so game time does not advance.
+func save_png_now(path: String) -> int:
 	return get_viewport().get_texture().get_image().save_png(path)
 
 

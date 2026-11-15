@@ -15,6 +15,8 @@ const CRACK_STAGES := 8
 const DIG_TICK := 0.22
 const PLACE_REPEAT := 0.28
 const CAPTURE_GRACE := 0.25
+const ATTACK_REACH := 3.5
+const ATTACK_COOLDOWN := 0.4
 
 const CRACK_SHADER := "
 shader_type spatial;
@@ -44,6 +46,7 @@ var touch: Control
 var audio: Node
 var inventory: RefCounted
 var drops: Node3D
+var mobs: Node3D
 
 var has_target := false
 var target := Vector3i.ZERO
@@ -51,6 +54,9 @@ var target := Vector3i.ZERO
 var place_cell := Vector3i.ZERO
 ## Current crack stage, 0 to CRACK_STAGES - 1, or -1 when not mining.
 var crack_stage := -1
+## Distance along the view ray to the targeted block.
+var target_dist := 0.0
+var _attack_timer := 0.0
 
 var _progress := 0.0
 var _mining_cell := Vector3i.ZERO
@@ -86,8 +92,28 @@ func _process(delta: float) -> void:
 	if player.frozen or player.ui_open:
 		mine = false
 		place = false
+	_attack_timer = maxf(_attack_timer - delta, 0.0)
+	if mine and _try_attack(cam):
+		mine = false
 	_update_mining(delta, mine)
 	_update_placing(delta, place)
+
+
+## Hits the creature under the crosshair, when one is closer than the targeted block.
+func _try_attack(cam: Camera3D) -> bool:
+	if mobs == null:
+		return false
+	var dir := -cam.global_basis.z
+	var hit: Array = mobs.pick(cam.global_position, dir, ATTACK_REACH)
+	if hit.is_empty() or (has_target and target_dist < hit[1]):
+		return false
+	if _attack_timer <= 0.0:
+		_attack_timer = ATTACK_COOLDOWN
+		var held: int = hotbar.selected_id()
+		mobs.hurt(hit[0], Items.attack_damage(held), dir)
+		if Items.is_tool_item(held) and inventory.damage(hotbar.selected):
+			audio.play("break", 1.8, -4.0)
+	return true
 
 
 func _update_mining(delta: float, held: bool) -> void:
@@ -149,6 +175,13 @@ func _update_placing(delta: float, held: bool) -> void:
 	if _place_timer > 0.0:
 		return
 	_place_timer = PLACE_REPEAT
+	var food := Items.food_points(hotbar.selected_id())
+	if food > 0:
+		if player.hunger <= player.MAX_HUNGER - 1.0:
+			player.eat(food)
+			inventory.take(hotbar.selected, 1)
+			audio.play("pop", 0.7, -3.0)
+		return
 	if not has_target:
 		return
 	if world.get_block(target.x, target.y, target.z) == Blocks.WORKBENCH:
@@ -187,6 +220,7 @@ func _raycast(origin: Vector3, dir: Vector3) -> void:
 		var id: int = world.get_block(p.x, p.y, p.z)
 		if id > 0 and id != Blocks.WATER:
 			has_target = true
+			target_dist = t
 			target = p
 			place_cell = prev
 			return

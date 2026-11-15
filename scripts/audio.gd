@@ -130,6 +130,8 @@ func _synthesise_all() -> void:
 		"step": _wav(_burst(rng, 0.09, 0.12, 40.0, 70.0, 0.3)),
 		"splash": _wav(_splash(rng)),
 		"pop": _wav(_pop()),
+		"hit": _wav(_burst(rng, 0.11, 0.5, 26.0, 220.0, 0.5)),
+		"growl": _wav(_growl(rng)),
 		"pluck": _wav(_pluck()),
 		"pad": _wav(_pad()),
 	}
@@ -168,6 +170,23 @@ func _splash(rng: RandomNumberGenerator) -> PackedFloat32Array:
 		var lowpass := lerpf(0.55, 0.05, minf(t / 0.4, 1.0))
 		y += lowpass * (rng.randf_range(-1.0, 1.0) - y)
 		out[i] = y * exp(-t * 7.0) * minf(t / 0.004, 1.0)
+	return out
+
+
+## Low rough voice with a slow wobble, for creatures of the night.
+func _growl(rng: RandomNumberGenerator) -> PackedFloat32Array:
+	var dur := 0.5
+	var n := int(dur * RATE)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var phase := 0.0
+	var y := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		phase += (62.0 + 9.0 * sin(TAU * 7.0 * t)) / RATE
+		var saw := fposmod(phase, 1.0) * 2.0 - 1.0
+		y += 0.18 * (saw + rng.randf_range(-0.35, 0.35) - y)
+		out[i] = y * sin(PI * t / dur)
 	return out
 
 

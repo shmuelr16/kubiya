@@ -33,6 +33,9 @@ Targets: macOS, Windows, Android, iOS, web. Public repository, MIT license.
 | `scripts/hotbar.gd` | Shows inventory slots 0-8: keys 1-9, wheel, tap |
 | `scripts/touch_ui.gd` | Virtual joystick, jump / mine / place / bag buttons, drag to look |
 | `scripts/audio.gd` | Synthesised sound effects and generative music |
+| `scripts/daynight.gd` | Clock, sky dome shader (sun, moon, stars), global `daylight`, fog colour |
+| `scripts/mobs.gd` | The four creatures: models, movement, AI, spawning, combat |
+| `scripts/status_hud.gd` | Hearts, hunger, damage flash, defeat message |
 | `scripts/selftest.gd` | Automated play test through simulated touch events |
 | `docs/` | Screenshot now. Later the GitHub Pages site |
 
@@ -50,8 +53,8 @@ The scene tree is built in code. Keep `.tscn` files minimal.
 - A chunk is meshed only when its 4 side neighbours have data. A face is drawn when
   the neighbour is air, or water next to a solid block. Leaves are opaque.
 - One `ArrayMesh` per chunk: surface for solids, surface for water.
-  Vertex data: position, UV, colour. No normals: both shaders are unshaded and the
-  per-face shade is baked into vertex colour. `daylight` is a shader uniform.
+  Vertex data: position, UV, colour. No normals: both shaders are unshaded.
+  Vertex colour holds R = face shade, G = sky light, B = block light.
 - Quad winding: `FACE_DEFS` holds `u` and `v` with `u x v = normal`, and corners
   go `o, o+v, o+u+v, o+u`. That order is clockwise from outside, which Godot draws
   as the front face.
@@ -72,9 +75,47 @@ The scene tree is built in code. Keep `.tscn` files minimal.
 - Add a block: extend the enum and every per-block table in `blocks.gd` (`TILE_OF`,
   `HARDNESS`, `TOOL`, `MIN_TIER`, `SOLID`, `SEE_THROUGH`, `PITCH`), and paint its
   tiles in `make_atlas()`. The atlas is 8 x 8 tiles: 0-31 block faces, 32+ item icons.
-- A torch is a block with its own shape in `mesher.gd`. It is not solid and does
-  not hide neighbour faces. It gives no light yet: there is no lighting system.
+- A torch is a block with its own shape in `mesher.gd`. It is not solid, does
+  not hide neighbour faces, and emits block light 13.
 - A furnace can be crafted and placed. It does not smelt yet.
+
+## Light, day and night
+
+- Light is baked per face in `mesher.gd`, on the worker thread, and never stored.
+  The shader does `max(sky * daylight, block)`. `daylight` is a global shader
+  value set by `daynight.gd`, so the day cycle costs no re-meshing. Every shader
+  that should darken at night declares `global uniform float daylight;`.
+  `main.gd` registers that value before anything else: keep it first in `_ready`.
+- Sky light: 15 in cells that see the sky, flood-filled inside the chunk, minus 1
+  per block, minus 2 per water block straight down. Neighbour chunks feed light in
+  only through their open-sky cells. Known limit: light that travelled through a
+  neighbour's cave does not continue, so caves that cross a chunk border near an
+  entrance can show a seam.
+- Block light: flood-filled from torches on a grid padded by 13 blocks, reading
+  the 4 side neighbours. Diagonal neighbours count as solid. `world.gd` tracks
+  torch cells per chunk and hands the mesher the torches of the 3x3 chunks.
+- An edit re-meshes neighbours by reach: 1 block for geometry, 4 when the block's
+  transparency changed, 6 when torches are near, 13 when a torch changed.
+- Creatures and drops have no baked light. Creatures test for open sky twice a second.
+- Minimum brightness is 0.07 in the block shaders. Night daylight is 0.18.
+- The sky is one dome mesh that follows the camera. Its shader draws everything.
+  The environment has no Sky resource: background and fog take the horizon colour.
+
+## Survival and creatures
+
+- Health and hunger live in `player.gd`: `hurt()`, `eat()`, `stats_step()`.
+  Fall damage is the fall height above 3 blocks. Death respawns at `spawn_point`
+  with the inventory kept.
+- Creatures are our own designs: Mokki, Dundle (passive), Gloomer, Skitter (hostile).
+  Do not add creatures that resemble those of any existing game.
+  Each is a set of coloured boxes merged into one mesh; alpha 0 marks glowing parts.
+  One material per creature, for its light level and hit flash.
+- A new creature needs: an enum entry and a row in every per-type table in
+  `mobs.gd`, a model in `_mesh_for()`, and a row in both README tables.
+- Hostile creatures spawn at night on any solid ground 16 to 30 blocks away, up
+  to 8, and dissolve by day. Passive ones spawn by day on grass, up to 6.
+- Attacks go through `mobs.pick()` from `interaction.gd`: a creature closer than
+  the targeted block takes the hit and the block is not mined.
 
 ## Items and crafting
 
@@ -125,10 +166,14 @@ $G --path . -- --shot=/tmp/m.png --pos=0,100,0 --look=-25,-90 --fly=20 --dist=5 
 `--shot` opens a real window, turns off vsync and player input, waits for the world
 to load, measures 5 seconds, saves a PNG, prints one `SHOT` line and quits.
 `--selftest` checks the rule tables (recipes, drops, tool speed, stacking) and then
-plays the game with simulated touches: joystick, look, jump, mining, item pickup,
-placing, both crafting screens, tools, torch, swimming, music. It must end with
-`SELFTEST ALL PASS`. It writes `PATH_crack.png`, `PATH_inventory.png`,
-`PATH_workbench.png` and `PATH_torch.png`. Add a check there for every new mechanic.
+the light rules on hand-built chunks, and then plays the game with simulated
+touches: joystick, look, jump, mining, item pickup, placing, both crafting screens,
+tools, torch, swimming, music, day and night, fall damage, hunger, eating, death,
+combat, creature AI and spawning. It must end with `SELFTEST ALL PASS`. It freezes
+the clock at noon and turns natural spawning off except where it tests them.
+It writes `PATH_crack.png`, `PATH_inventory.png`, `PATH_workbench.png`,
+`PATH_torch.png`, `PATH_night.png`, `PATH_torchlight.png`, `PATH_sunrise.png` and `PATH_creatures.png`.
+Add a check there for every new mechanic.
 
 Check after every change: no script errors, `SELFTEST ALL PASS`, `floor=true` in
 the first `--shot` command, the PNGs look right, and `run fps` and `worst frame`

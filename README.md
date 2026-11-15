@@ -3,6 +3,9 @@
 ![Kubiya screenshot](docs/screenshot.png)
 ![Mining and building with touch controls](docs/screenshot-touch.png)
 ![Crafting a pickaxe at the workbench](docs/screenshot-crafting.png)
+![Night sky with moon and stars](docs/screenshot-night.png)
+![The four creatures](docs/screenshot-creatures.png)
+![Torch light at night](docs/screenshot-torchlight.png)
 
 **English** | [עברית](#עברית)
 
@@ -14,9 +17,11 @@ The name, textures, sounds and music are original. Textures are generated in cod
 
 ## Status
 
-Early development. Stages 1 to 4 are done: an endless generated world with hills,
+Early development. Stages 1 to 5 are done: an endless generated world with hills,
 sea, caves, trees and ores; mining and building; item drops, inventory, crafting and
-tools; keyboard, mouse and touch controls; sound and music generated in code.
+tools; day and night with sun, moon and stars; sky and torch light; health and
+hunger; four original creatures; keyboard, mouse and touch controls; sound and music
+generated in code.
 
 | Stage | Content | State |
 |-------|---------|-------|
@@ -24,7 +29,8 @@ tools; keyboard, mouse and touch controls; sound and music generated in code.
 | 2 | Endless world: 16x16x128 chunks, hills, water, caves, trees, ores, streaming | Done |
 | 3 | First-person player, mining, building, hotbar, touch controls, sounds, music | Done |
 | 4 | Item drops, inventory, 2x2 and 3x3 crafting, tools, torch, workbench | Done |
-| 5 | Save and load, day and night, lighting, smelting, monsters, health, menus | Planned |
+| 5 | Day and night, sky and torch light, health, hunger, creatures | Done |
+| 5b | Save and load, smelting, menus | Planned |
 | 6 | Builds: macOS `.dmg`, Windows, Android APK, iOS, web | Planned |
 | 7 | Download site on GitHub Pages with the browser version | Planned |
 
@@ -36,8 +42,8 @@ tools; keyboard, mouse and touch controls; sound and music generated in code.
 | Look | Mouse (click the window first) |
 | Jump / swim up | Space |
 | Run | Shift |
-| Mine | Hold left mouse button |
-| Place block, use workbench | Right mouse button |
+| Mine, hit a creature | Hold left mouse button |
+| Place block, use workbench, eat | Right mouse button |
 | Choose hotbar slot | 1 to 9, or mouse wheel |
 | Inventory and 2x2 crafting | E |
 | Music on / off | M |
@@ -45,6 +51,21 @@ tools; keyboard, mouse and touch controls; sound and music generated in code.
 
 Touch: joystick on the left, buttons for jump, mine (hold) and place on the right,
 drag anywhere else to look, tap a hotbar slot to choose it, bag button for the inventory.
+
+## Survival
+
+A day lasts 10 minutes. Caves and nights are dark; torches give light.
+Health drops from long falls, creature attacks and starvation, and returns while
+the hunger bar is nearly full. Eat meat or fruit with the place button.
+
+| Creature | Behaviour |
+|----------|-----------|
+| Mokki | Small cream hopper with tall ears. Harmless. Drops meat |
+| Dundle | Wide slow grazer with teal back plates. Harmless. Drops meat |
+| Gloomer | Dark floating cube with one glowing eye. Night only. Chases and strikes |
+| Skitter | Flat fast crawler with orange eyes. Night only. Chases and strikes |
+
+Night creatures dissolve at sunrise.
 
 ## Crafting
 
@@ -93,7 +114,7 @@ MIT. See [LICENSE](LICENSE).
 
 ### מצב
 
-פיתוח מוקדם. שלבים 1 עד 4 הושלמו: עולם אינסופי עם גבעות, ים, מערות, עצים ועפרות; כרייה ובנייה; פריטים נופלים, מלאי, יצירת חפצים וכלים; שליטה במקלדת, עכבר ומגע; צלילים ומוזיקה שנוצרים בקוד.
+פיתוח מוקדם. שלבים 1 עד 5 הושלמו: עולם אינסופי עם גבעות, ים, מערות, עצים ועפרות; כרייה ובנייה; פריטים נופלים, מלאי, יצירת חפצים וכלים; יום ולילה עם שמש, ירח וכוכבים; אור שמיים ואור לפידים; בריאות ורעב; ארבעה יצורים מקוריים; שליטה במקלדת, עכבר ומגע; צלילים ומוזיקה שנוצרים בקוד.
 
 | שלב | תוכן | מצב |
 |-----|------|-----|
@@ -101,7 +122,8 @@ MIT. See [LICENSE](LICENSE).
 | 2 | עולם אינסופי: צ'אנקים 16x16x128, גבעות, מים, מערות, עצים, עפרות, טעינה דינמית | בוצע |
 | 3 | שחקן בגוף ראשון, כרייה, בנייה, סרגל חפצים, שליטה במגע, צלילים, מוזיקה | בוצע |
 | 4 | פריטים נופלים, מלאי, יצירה 2x2 ו־3x3, כלים, לפיד, שולחן עבודה | בוצע |
-| 5 | שמירה וטעינה, יום ולילה, תאורה, התכה, מפלצות, חיים, תפריטים | מתוכנן |
+| 5 | יום ולילה, אור שמיים ולפידים, בריאות, רעב, יצורים | בוצע |
+| 5b | שמירה וטעינה, התכה, תפריטים | מתוכנן |
 | 6 | גרסאות: מק (`.dmg`), ווינדוס, אנדרואיד (APK), אייפון, דפדפן | מתוכנן |
 | 7 | אתר הורדה ב־GitHub Pages עם גרסת הדפדפן | מתוכנן |
 
@@ -113,8 +135,8 @@ MIT. See [LICENSE](LICENSE).
 | מבט | עכבר (קודם לוחצים על החלון) |
 | קפיצה / שחייה למעלה | רווח |
 | ריצה | Shift |
-| כרייה | לחיצה ארוכה על כפתור שמאלי |
-| הצבת בלוק, שימוש בשולחן עבודה | כפתור ימני |
+| כרייה, מכה ביצור | לחיצה ארוכה על כפתור שמאלי |
+| הצבת בלוק, שימוש בשולחן עבודה, אכילה | כפתור ימני |
 | בחירת משבצת בסרגל | 1 עד 9, או גלגלת |
 | מלאי ויצירה 2x2 | E |
 | מוזיקה | M |
@@ -122,6 +144,21 @@ MIT. See [LICENSE](LICENSE).
 
 מגע: ג'ויסטיק משמאל, כפתורי קפיצה, כרייה (לחיצה ארוכה) והצבה מימין,
 גרירה בכל מקום אחר מזיזה את המבט, נגיעה במשבצת בסרגל בוחרת אותה, כפתור תיק פותח את המלאי.
+
+### הישרדות
+
+יום נמשך 10 דקות. מערות ולילות חשוכים; לפידים מאירים.
+בריאות יורדת מנפילה גבוהה, מתקיפת יצורים ומרעב, וחוזרת כשמד הרעב כמעט מלא.
+אוכלים בשר או פרי בכפתור ההצבה.
+
+| יצור | התנהגות |
+|------|---------|
+| מוקי (Mokki) | קופצן קטן בצבע שמנת עם אוזניים גבוהות. לא מזיק. מפיל בשר |
+| דנדל (Dundle) | רועה רחב ואיטי עם לוחות גב בצבע טורקיז. לא מזיק. מפיל בשר |
+| גלומר (Gloomer) | קובייה כהה מרחפת עם עין זוהרת אחת. רק בלילה. רודף ותוקף |
+| סקיטר (Skitter) | זוחל שטוח ומהיר עם עיניים כתומות. רק בלילה. רודף ותוקף |
+
+יצורי הלילה מתפוגגים בזריחה.
 
 ### יצירת חפצים
 

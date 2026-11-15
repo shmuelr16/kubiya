@@ -98,6 +98,14 @@ const ICON_SHOVEL := [
 	".........hhhhh", "........sshhh", ".......sss", "......sss", ".....sss", "....sss",
 	"...sss", "..sss", ".sss", ".ss",
 ]
+const ICON_MEAT := [
+	"", "", ".......mmmm", "......mmmmmm", ".....mmmMMmmm", ".....mmmMmmmm", ".....mmmmmmm",
+	"......mmmmm", ".....bbmm", "....bb", "...bb", "..bbb", "..bb",
+]
+const ICON_FRUIT := [
+	"", "", ".......g", "......gg", ".....ffff", "....ffffff", "...ffFFffff", "...ffFfffff",
+	"...ffffffff", "...ffffffff", "....ffffff", ".....ffff",
+]
 const ICON_SWORD := [
 	"", ".............hh", "............hhh", "...........hhh", "..........hhh",
 	".........hhh", "........hhh", ".......hhh", "..s...hhh", "..ss.hhh", "...sshh",
@@ -213,6 +221,11 @@ static func make_atlas() -> ImageTexture:
 		_icon(img, base + 1, ICON_AXE, colors)
 		_icon(img, base + 2, ICON_SHOVEL, colors)
 		_icon(img, base + 3, ICON_SWORD, colors)
+
+	_icon(img, ICON_BASE + 10, ICON_MEAT, {
+		"m": Color(0.76, 0.30, 0.26), "M": Color(0.93, 0.52, 0.45), "b": Color(0.93, 0.91, 0.83)})
+	_icon(img, ICON_BASE + 11, ICON_FRUIT, {
+		"f": Color(0.80, 0.22, 0.48), "F": Color(0.97, 0.60, 0.76), "g": Color(0.30, 0.62, 0.25)})
 
 	return ImageTexture.create_from_image(img)
 

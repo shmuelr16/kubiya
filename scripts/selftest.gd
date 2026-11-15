@@ -8,6 +8,8 @@ const Blocks := preload("res://scripts/blocks.gd")
 const Items := preload("res://scripts/items.gd")
 const Crafting := preload("res://scripts/crafting.gd")
 const Terrain := preload("res://scripts/terrain.gd")
+const Mesher := preload("res://scripts/mesher.gd")
+const Mobs := preload("res://scripts/mobs.gd")
 
 var main: Node3D
 var path := ""
@@ -30,14 +32,21 @@ func _run() -> void:
 	var inv: RefCounted = main.inventory
 	var ui: Control = main.inventory_ui
 	var drops: Node3D = main.drops
+	var dn: Node3D = main.daynight
+	var mobs: Node3D = main.mobs
 	_xf = get_viewport().get_final_transform()
+	# Fixed noon and no wild creatures, until the sections that test them.
+	mobs.auto_spawn = false
+	dn.paused = true
+	dn.set_time(0.25)
 
 	_rules()
+	_light_rules()
 
 	await _until(func() -> bool: return w.is_idle() and not p.frozen, 90.0)
 	await _wait(0.6)
 	_check("spawn_on_floor", p.on_floor, "pos=%s" % p.position)
-	_check("audio_synthesised", main.audio.streams.size() == 8, "streams=%d" % main.audio.streams.size())
+	_check("audio_synthesised", main.audio.streams.size() == 10, "streams=%d" % main.audio.streams.size())
 	_check("inventory_starts_empty", inv.count_of(Blocks.DIRT) == 0 and hb.selected_id() == 0)
 
 	# Joystick: push forward for a second.
@@ -106,7 +115,7 @@ func _run() -> void:
 		max_stage = maxi(max_stage, it.crack_stage)
 		if it.crack_stage >= 5 and not shot_done:
 			shot_done = true
-			await main.save_png(path + "_crack.png")
+			main.save_png_now(path + "_crack.png")
 	var mine_ms := Time.get_ticks_msec() - t0
 	_touch(3, t.button_pos("mine"), false)
 	max_drops = drops.list.size()
@@ -225,6 +234,7 @@ func _run() -> void:
 	spot = await _aim_at_free_cell()
 	await _hold("place", 3)
 	_check("place_torch", w.get_block(spot.x, spot.y, spot.z) == Blocks.TORCH and not w.is_solid(spot.x, spot.y, spot.z))
+	var torch_view := [p.position, p.rotation.y, p.cam.rotation.x]
 	await _until(func() -> bool: return w.is_idle(), 5.0)
 	await _frames(3)
 	await main.save_png(path + "_torch.png")
@@ -247,6 +257,142 @@ func _run() -> void:
 
 	await _wait(2.0)
 	_check("music_plays", main.audio.notes_played >= 3, "notes=%d" % main.audio.notes_played)
+
+	# --- Day and night ---
+	p.position = p.spawn_point
+	p.vel = Vector3.ZERO
+	await _until(func() -> bool: return p.on_floor, 4.0)
+	dn.set_time(0.25)
+	_check("noon_is_bright", dn.daylight > 0.95 and not dn.is_night(), "daylight=%.2f" % dn.daylight)
+	dn.set_time(0.75)
+	_check("midnight_is_dark", dn.daylight < 0.2 and dn.is_night(), "daylight=%.2f" % dn.daylight)
+	dn.paused = false
+	var clock: float = dn.time
+	await _wait(0.5)
+	_check("clock_runs", dn.time > clock, "%.5f -> %.5f" % [clock, dn.time])
+	dn.paused = true
+	# Midnight: look up at the moon and stars.
+	dn.set_time(0.75)
+	var moon: Vector3 = -Vector3(1, 0, 0).rotated(dn.AXIS, dn.time * TAU)
+	p.rotation.y = atan2(-moon.x, -moon.z)
+	p.cam.rotation.x = asin(moon.y) - 0.25
+	await _frames(4)
+	await main.save_png(path + "_night.png")
+	# Still midnight: the torch placed earlier lights the ground around it.
+	p.frozen = true
+	p.position = torch_view[0]
+	p.rotation.y = torch_view[1]
+	p.cam.rotation.x = torch_view[2]
+	await _frames(4)
+	await main.save_png(path + "_torchlight.png")
+	p.frozen = false
+	p.position = p.spawn_point
+	await _until(func() -> bool: return p.on_floor, 4.0)
+	# Just after sunrise: look east.
+	dn.set_time(0.035)
+	p.rotation.y = -PI / 2.0
+	p.cam.rotation.x = 0.12
+	await _frames(4)
+	await main.save_png(path + "_sunrise.png")
+	dn.set_time(0.25)
+
+	# --- Health and hunger ---
+	p.health = p.MAX_HEALTH
+	p.position.y += 12.0
+	await _wait(0.3)
+	await _until(func() -> bool: return p.on_floor, 5.0)
+	_check("fall_damage", is_equal_approx(p.health, 11.0), "health=%.1f after a 12 block fall" % p.health)
+	p.hunger = p.MAX_HUNGER
+	for i in 600:
+		p.stats_step(0.1)
+	_check("hunger_drains", p.hunger < 19.0, "hunger=%.2f after 60 s" % p.hunger)
+	_check("full_stomach_heals", p.health > 11.0, "health=%.1f" % p.health)
+	p.hunger = 0.0
+	p.health = 5.0
+	for i in 100:
+		p.stats_step(0.1)
+	_check("starving_hurts", is_equal_approx(p.health, 3.0), "health=%.1f after 10 s" % p.health)
+	for i in 400:
+		p.stats_step(0.1)
+	_check("starving_stops_at_one", is_equal_approx(p.health, 1.0) and p.deaths == 0, "health=%.1f" % p.health)
+
+	inv.add(Items.MEAT, 2)
+	await _tap(hb.slot_rect(inv.find(Items.MEAT)).get_center())
+	p.hunger = 10.0
+	await _hold("place", 3)
+	_check("eating_feeds", absf(p.hunger - 16.0) < 0.1 and inv.count_of(Items.MEAT) == 1, "hunger=%.1f" % p.hunger)
+	p.hunger = p.MAX_HUNGER
+	await _frames(20)
+	await _hold("place", 3)
+	_check("no_eating_when_full", inv.count_of(Items.MEAT) == 1)
+
+	p.position += Vector3(3, 0, 0)
+	p.hurt(100.0)
+	_check("death_respawns", p.deaths == 1 and p.health == p.MAX_HEALTH and p.position.distance_to(p.spawn_point) < 0.01)
+	await _until(func() -> bool: return p.on_floor, 4.0)
+
+	# --- Creatures ---
+	p.rotation.y = 0.0
+	p.cam.rotation.x = 0.0
+	var dundle: Object = mobs.spawn(Mobs.DUNDLE, p.position + Vector3(0, 1.5, -2.5))
+	await _wait(0.8)
+	await _until(func() -> bool: return dundle.on_floor, 4.0)
+	_check("creature_stands_on_ground", dundle.on_floor and mobs.list.size() == 1, "pos=%s" % dundle.pos)
+	inv.add(Items.STONE_SWORD, 1)
+	var sword: int = inv.find(Items.STONE_SWORD)
+	await _tap(hb.slot_rect(sword).get_center())
+	_aim(dundle.pos + Vector3(0, 0.5, 0))
+	await _frames(2)
+	_touch(3, t.button_pos("mine"), true)
+	await _frames(4)
+	_touch(3, t.button_pos("mine"), false)
+	_check("sword_hits_creature", is_equal_approx(dundle.hp, 5.0), "hp=%.0f" % dundle.hp)
+	_check("passive_flees_when_hit", dundle.flee > 0.0 and dundle.flash > 0.0)
+	_check("sword_wears", inv.durs[sword] == Items.max_durability(Items.STONE_SWORD) - 1)
+	var before_drops: int = drops.list.size()
+	mobs.hurt(dundle, 99.0, Vector3.FORWARD)
+	_check("creature_dies_and_drops", mobs.list.is_empty() and drops.list.size() == before_drops + 1
+			and drops.list[-1].id == Items.MEAT and drops.list[-1].count == 2)
+
+	# One of each, for a picture.
+	for i in 4:
+		mobs.spawn(i, p.position + Vector3(-2.4 + i * 1.6, 1.2, -3.2))
+	p.cam.rotation.x = -0.22
+	p.frozen = true
+	await _wait(0.5)
+	await main.save_png(path + "_creatures.png")
+	p.frozen = false
+	for m: Object in mobs.list.duplicate():
+		mobs._remove(m)
+
+	# A night creature chases and strikes.
+	dn.set_time(0.75)
+	p.health = p.MAX_HEALTH
+	var gloomer: Object = mobs.spawn(Mobs.GLOOMER, p.position + Vector3(0, 1.5, -6.0))
+	var far := 6.0
+	await _wait(1.2)
+	var near: float = Vector2(gloomer.pos.x - p.position.x, gloomer.pos.z - p.position.z).length()
+	_check("hostile_chases", gloomer.chasing and near < far - 1.5, "distance %.1f -> %.1f" % [far, near])
+	await _until(func() -> bool: return p.health < p.MAX_HEALTH, 10.0)
+	_check("hostile_strikes", is_equal_approx(p.health, p.MAX_HEALTH - Mobs.DAMAGE[Mobs.GLOOMER]), "health=%.0f" % p.health)
+	mobs._remove(gloomer)
+
+	# Natural spawning: night creatures at night, gone by day; grazers by day.
+	p.frozen = true
+	for i in 60:
+		mobs.spawn_tick()
+	p.frozen = false
+	_check("frozen_player_spawns_nothing", mobs.list.is_empty())
+	var chasers := 0
+	for i in 60:
+		mobs.spawn_tick()
+	chasers = mobs.count(true)
+	_check("night_spawns_hostiles", chasers > 0 and chasers <= Mobs.MAX_HOSTILE and mobs.count(false) == 0, "hostile=%d" % chasers)
+	dn.set_time(0.25)
+	for i in 60:
+		mobs.spawn_tick()
+	_check("hostiles_dissolve_by_day", mobs.count(true) == 0, "hostile=%d" % mobs.count(true))
+	_check("day_spawns_passives", mobs.count(false) > 0 and mobs.count(false) <= Mobs.MAX_PASSIVE, "passive=%d" % mobs.count(false))
 
 	print("SELFTEST %s" % ("ALL PASS" if failed == 0 else "%d FAILED" % failed))
 	get_tree().quit(1 if failed > 0 else 0)
@@ -297,6 +443,75 @@ func _rules() -> void:
 	left = inv.add(Blocks.STONE, 64 * 40)
 	_check("full_inventory_rejects", left == 64 * 40 - 64 * 32 and not inv.can_add(Blocks.STONE) and inv.can_add(Blocks.DIRT),
 			"left=%d" % left)
+
+
+## Light is computed in the mesher. Checked here on small hand-built chunks.
+func _light_rules() -> void:
+	var open := _slab(false, false)
+	var roofed := _slab(true, false)
+	var holed := _slab(true, true)
+	var m := Mesher.new()
+	m.build(open, open, open, open, open, 15)
+	_check("open_sky_is_full_light", m.sl[_ci(8, 12, 8)] == 15 and m.sl[_ci(0, 11, 0)] == 15)
+
+	m = Mesher.new()
+	m.build(roofed, roofed, roofed, roofed, roofed, 15)
+	_check("sealed_room_is_dark", m.sl[_ci(8, 12, 8)] == 0 and not m.has_bl)
+
+	m = Mesher.new()
+	m.build(holed, roofed, roofed, roofed, roofed, 15)
+	_check("light_falls_through_a_hole", m.sl[_ci(8, 12, 8)] == 15, "under hole=%d" % m.sl[_ci(8, 12, 8)])
+	_check("light_fades_sideways", m.sl[_ci(10, 12, 8)] == 13 and m.sl[_ci(8, 12, 13)] == 10 and m.sl[_ci(8, 11, 8)] == 15,
+			"2 away=%d, 5 away=%d" % [m.sl[_ci(10, 12, 8)], m.sl[_ci(8, 12, 13)]])
+
+	m = Mesher.new()
+	m.build(roofed, open, open, open, open, 15)
+	_check("light_enters_from_neighbour", m.sl[_ci(0, 12, 8)] == 14 and m.sl[_ci(5, 12, 8)] == 9,
+			"edge=%d, 5 in=%d" % [m.sl[_ci(0, 12, 8)], m.sl[_ci(5, 12, 8)]])
+
+	var lit := roofed.duplicate()
+	lit[_ci(8, 11, 8)] = Blocks.TORCH
+	m = Mesher.new()
+	m.build(lit, roofed, roofed, roofed, roofed, 15, PackedInt32Array([8, 11, 8]))
+	_check("torch_lights_a_dark_room", m.has_bl and m.bl[_pi(8, 11, 8)] == Mesher.TORCH_LIGHT
+			and m.bl[_pi(10, 11, 8)] == Mesher.TORCH_LIGHT - 2 and m.sl[_ci(8, 12, 8)] == 0,
+			"at torch=%d, 2 away=%d" % [m.bl[_pi(8, 11, 8)], m.bl[_pi(10, 11, 8)]])
+	_check("torch_light_stops_at_walls", m.bl[_pi(8, 5, 8)] == 0 and m.bl[_pi(8, 15, 8)] == 0)
+
+	var neighbour := roofed.duplicate()
+	neighbour[_ci(14, 11, 8)] = Blocks.TORCH
+	m = Mesher.new()
+	m.build(roofed, neighbour, roofed, roofed, roofed, 15, PackedInt32Array([-2, 11, 8]))
+	_check("torch_light_crosses_chunks", m.bl[_pi(0, 11, 8)] == Mesher.TORCH_LIGHT - 2, "edge=%d" % m.bl[_pi(0, 11, 8)])
+	_check("light_levels_fade_smoothly", m.sky_lut[15] == 1.0 and m.sky_lut[14] < 1.0 and m.sky_lut[0] > 0.0 and m.block_lut[0] == 0.0)
+
+
+## Test chunk: stone up to y 10, optional stone roof at y 15, optional 1-block hole at (8, 8).
+func _slab(roof: bool, hole: bool) -> PackedByteArray:
+	var d := PackedByteArray()
+	d.resize(16 * 16 * 128)
+	for c in 256:
+		for y in 11:
+			d[(c << 7) + y] = Blocks.STONE
+		if roof and not (hole and c == 8 + 8 * 16):
+			d[(c << 7) + 15] = Blocks.STONE
+	return d
+
+
+func _ci(x: int, y: int, z: int) -> int:
+	return ((x + z * 16) << 7) + y
+
+
+func _pi(x: int, y: int, z: int) -> int:
+	return (((x + Mesher.PAD) + (z + Mesher.PAD) * Mesher.PW) << 7) + y
+
+
+## Points the camera at a world position.
+func _aim(target: Vector3) -> void:
+	var p: Node3D = main.player
+	var d: Vector3 = (target - p.cam.global_position).normalized()
+	p.rotation.y = atan2(-d.x, -d.z)
+	p.cam.rotation.x = asin(d.y)
 
 
 func _recipe(test: String, cells: Array, n: int, expect: Array) -> void:
