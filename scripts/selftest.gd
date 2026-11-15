@@ -1,15 +1,19 @@
 extends Node
 ## Automated play test. Drives the game through real touch events, so it covers
-## the touch UI, the player, mining, placing, re-meshing, swimming and audio.
+## the touch UI, the player, mining, item drops, the inventory and crafting
+## screens, tools, placing, re-meshing, swimming and audio.
 ## Run: godot --path . -- --selftest=/tmp/kubiya   (writes /tmp/kubiya_*.png)
 
 const Blocks := preload("res://scripts/blocks.gd")
+const Items := preload("res://scripts/items.gd")
+const Crafting := preload("res://scripts/crafting.gd")
 const Terrain := preload("res://scripts/terrain.gd")
 
 var main: Node3D
 var path := ""
 var failed := 0
 var _xf: Transform2D
+var _finger := 10
 
 
 func _ready() -> void:
@@ -23,12 +27,18 @@ func _run() -> void:
 	var it: Node3D = main.interaction
 	var t: Control = main.touch
 	var hb: Control = main.hotbar
+	var inv: RefCounted = main.inventory
+	var ui: Control = main.inventory_ui
+	var drops: Node3D = main.drops
 	_xf = get_viewport().get_final_transform()
+
+	_rules()
 
 	await _until(func() -> bool: return w.is_idle() and not p.frozen, 90.0)
 	await _wait(0.6)
 	_check("spawn_on_floor", p.on_floor, "pos=%s" % p.position)
-	_check("audio_synthesised", main.audio.streams.size() == 7, "streams=%d" % main.audio.streams.size())
+	_check("audio_synthesised", main.audio.streams.size() == 8, "streams=%d" % main.audio.streams.size())
+	_check("inventory_starts_empty", inv.count_of(Blocks.DIRT) == 0 and hb.selected_id() == 0)
 
 	# Joystick: push forward for a second.
 	var start: Vector3 = p.position
@@ -89,6 +99,7 @@ func _run() -> void:
 	_touch(3, t.button_pos("mine"), true)
 	var max_stage := -1
 	var shot_done := false
+	var max_drops := 0
 	var t0 := Time.get_ticks_msec()
 	while w.get_block(cell.x, cell.y, cell.z) != Blocks.AIR and Time.get_ticks_msec() - t0 < 8000:
 		await _frame()
@@ -98,50 +109,125 @@ func _run() -> void:
 			await main.save_png(path + "_crack.png")
 	var mine_ms := Time.get_ticks_msec() - t0
 	_touch(3, t.button_pos("mine"), false)
+	max_drops = drops.list.size()
 	_check("mine_long_press", w.get_block(cell.x, cell.y, cell.z) == Blocks.AIR, "took %d ms" % mine_ms)
 	_check("mine_is_not_instant", mine_ms > 300, "took %d ms" % mine_ms)
 	_check("crack_grows", max_stage >= 5 and it.crack_stage == -1, "max stage=%d" % max_stage)
+	_check("block_drops_item", max_drops == 1 and drops.list[0].id == Blocks.DIRT, "drops=%d" % max_drops)
 	await _until(func() -> bool: return w.is_idle(), 5.0)
 	_check("remesh_after_edit", w.is_idle())
 	await _until(func() -> bool: return p.on_floor, 4.0)
 	_check("falls_into_hole", p.position.y < y0 - 0.5, "y %.1f -> %.1f" % [y0, p.position.y])
-
-	# Hotbar: tap the bricks slot.
-	var slot := 7
-	var tap: Vector2 = hb.slot_rect(slot).get_center()
-	_touch(4, tap, true)
-	await _frame()
-	_touch(4, tap, false)
-	await _frame()
-	_check("hotbar_tap_selects", hb.selected == slot and hb.selected_id() == Blocks.BRICKS)
+	await _until(func() -> bool: return drops.list.is_empty(), 4.0)
+	_check("item_collected", drops.list.is_empty() and inv.count_of(Blocks.DIRT) == 1 and inv.ids[0] == Blocks.DIRT,
+			"dirt=%d" % inv.count_of(Blocks.DIRT))
 
 	# Standing in the hole and looking down: the only free cell overlaps the player.
 	var feet: Vector3i = it.place_cell
-	_touch(5, t.button_pos("place"), true)
-	await _frames(3)
-	_touch(5, t.button_pos("place"), false)
-	await _frames(2)
-	_check("no_place_inside_player", w.get_block(feet.x, feet.y, feet.z) == Blocks.AIR)
+	await _hold("place", 3)
+	_check("no_place_inside_player", w.get_block(feet.x, feet.y, feet.z) == Blocks.AIR and inv.count_of(Blocks.DIRT) == 1)
 
-	# Place against the wall of the hole.
-	p.cam.rotation.x = -0.9
-	var placed := false
-	for attempt in 8:
-		await _frames(3)
-		if it.has_target and not p.intersects_cell(it.place_cell):
-			var c: Vector3i = it.place_cell
-			_touch(5, t.button_pos("place"), true)
-			await _frames(3)
-			_touch(5, t.button_pos("place"), false)
-			await _frames(2)
-			placed = w.get_block(c.x, c.y, c.z) == Blocks.BRICKS
-			break
-		p.rotate_y(PI / 4.0)
-		p.cam.rotation.x += 0.12
-	_check("place_block", placed)
+	# Place the dirt against the wall of the hole. It leaves the inventory.
+	var spot := await _aim_at_free_cell()
+	await _hold("place", 3)
+	_check("place_block", w.get_block(spot.x, spot.y, spot.z) == Blocks.DIRT)
+	_check("placing_uses_item", inv.count_of(Blocks.DIRT) == 0)
+	await _hold("place", 3)
+	await _frames(20)
+	_check("no_place_with_empty_hand", inv.count_of(Blocks.DIRT) == 0 and hb.selected_id() == 0)
+
+	# Inventory screen, 2x2: wood -> planks -> workbench.
+	inv.add(Blocks.WOOD, 3)
+	await _tap(t.bag_pos())
+	_check("bag_button_opens_2x2", ui.visible and ui.grid_n == 2 and p.ui_open and not t.enabled)
+	await _tap(ui.inv_rect(0).get_center())
+	_check("pick_up_stack", ui.held_id == Blocks.WOOD and ui.held_count == 3 and inv.counts[0] == 0)
+	await _tap(ui.craft_rect(0, 0).get_center())
+	_check("craft_cell_takes_one", ui.g_counts[0] == 1 and ui.held_count == 2)
+	_check("recipe_planks", ui.result == [Blocks.PLANKS, 4], str(ui.result))
+	await _tap(ui.result_rect().get_center())
+	_check("craft_planks", inv.count_of(Blocks.PLANKS) == 4 and ui.g_counts[0] == 0 and ui.result.is_empty())
+	await _tap(ui.inv_rect(20).get_center())
+	_check("put_down_stack", inv.ids[20] == Blocks.WOOD and inv.counts[20] == 2 and ui.held_count == 0)
+	await _tap(ui.inv_rect(inv.find(Blocks.PLANKS)).get_center())
+	for c: Vector2i in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)]:
+		await _tap(ui.craft_rect(c.x, c.y).get_center())
+	_check("recipe_workbench", ui.result == [Blocks.WORKBENCH, 1] and ui.held_count == 0, str(ui.result))
+	await main.save_png(path + "_inventory.png")
+	await _tap(ui.result_rect().get_center())
+	await _tap(ui.close_rect().get_center())
+	_check("close_button", not ui.visible and not p.ui_open and t.enabled)
+	_check("craft_workbench", inv.count_of(Blocks.WORKBENCH) == 1 and inv.count_of(Blocks.PLANKS) == 0
+			and inv.count_of(Blocks.WOOD) == 2)
+
+	# Close with items on the grid and in the hand: they return to the inventory.
+	await _tap(t.bag_pos())
+	await _tap(ui.inv_rect(20).get_center())
+	await _tap(ui.craft_rect(1, 1).get_center())
+	await _tap(ui.close_rect().get_center())
+	_check("close_returns_items", inv.count_of(Blocks.WOOD) == 2 and ui.held_count == 0, "wood=%d" % inv.count_of(Blocks.WOOD))
+
+	# Place the workbench, then use it: the 3x3 grid opens.
+	var bench_slot: int = inv.find(Blocks.WORKBENCH)
+	await _tap(hb.slot_rect(bench_slot).get_center())
+	_check("hotbar_tap_selects", hb.selected == bench_slot and hb.selected_id() == Blocks.WORKBENCH)
+	spot = await _aim_at_free_cell()
+	await _hold("place", 3)
+	_check("place_workbench", w.get_block(spot.x, spot.y, spot.z) == Blocks.WORKBENCH and inv.count_of(Blocks.WORKBENCH) == 0)
+	await _frames(25)
+	_check("aiming_at_workbench", it.has_target and it.target == spot, "target=%s spot=%s" % [it.target, spot])
+	await _hold("place", 3)
+	_check("workbench_opens_3x3", ui.visible and ui.grid_n == 3)
+
+	# 3x3: craft sticks and a wooden pickaxe by taps.
+	inv.add(Blocks.PLANKS, 5)
+	var planks: int = inv.find(Blocks.PLANKS)
+	await _tap(ui.inv_rect(planks).get_center())
+	await _tap(ui.craft_rect(1, 0).get_center())
+	await _tap(ui.craft_rect(1, 1).get_center())
+	_check("recipe_sticks", ui.result == [Items.STICK, 4], str(ui.result))
+	await _tap(ui.result_rect().get_center())
+	for x in 3:
+		await _tap(ui.craft_rect(x, 0).get_center())
+	_check("planks_all_used", ui.held_count == 0, "held=%d" % ui.held_count)
+	await _tap(ui.inv_rect(inv.find(Items.STICK)).get_center())
+	await _tap(ui.craft_rect(1, 1).get_center())
+	await _tap(ui.craft_rect(1, 2).get_center())
+	_check("recipe_wood_pick", ui.result == [Items.WOOD_PICK, 1], str(ui.result))
+	await main.save_png(path + "_workbench.png")
+	await _tap(ui.result_rect().get_center())
+	await _tap(ui.close_rect().get_center())
+	_check("craft_wood_pick", inv.count_of(Items.WOOD_PICK) == 1 and inv.count_of(Items.STICK) == 2,
+			"pick=%d sticks=%d" % [inv.count_of(Items.WOOD_PICK), inv.count_of(Items.STICK)])
+
+	# Mine the workbench with the pickaxe in hand: the tool wears, the block comes back as an item.
+	var pick: int = inv.find(Items.WOOD_PICK)
+	_check("pick_in_hotbar", pick >= 0 and pick < 9, "slot=%d" % pick)
+	await _tap(hb.slot_rect(pick).get_center())
+	await _frames(3)
+	_touch(3, t.button_pos("mine"), true)
+	await _until(func() -> bool: return w.get_block(spot.x, spot.y, spot.z) == Blocks.AIR, 8.0)
+	_touch(3, t.button_pos("mine"), false)
+	_check("tool_wears", inv.durs[pick] == Items.max_durability(Items.WOOD_PICK) - 1, "dur=%d" % inv.durs[pick])
+	# The block may lie out of pickup range: either a drop exists or it was collected.
+	await _frames(5)
+	var lying: int = drops.list.filter(func(d: Object) -> bool: return d.id == Blocks.WORKBENCH).size()
+	_check("mined_block_drops_itself", lying + inv.count_of(Blocks.WORKBENCH) == 1,
+			"lying=%d held=%d" % [lying, inv.count_of(Blocks.WORKBENCH)])
+
+	# A tool cannot be placed as a block.
+	await _hold("place", 3)
+	_check("tool_is_not_placed", inv.count_of(Items.WOOD_PICK) == 1)
+
+	# Torch: not solid, has its own mesh, falls when its support is mined.
+	inv.add(Blocks.TORCH, 1)
+	await _tap(hb.slot_rect(inv.find(Blocks.TORCH)).get_center())
+	spot = await _aim_at_free_cell()
+	await _hold("place", 3)
+	_check("place_torch", w.get_block(spot.x, spot.y, spot.z) == Blocks.TORCH and not w.is_solid(spot.x, spot.y, spot.z))
 	await _until(func() -> bool: return w.is_idle(), 5.0)
 	await _frames(3)
-	await main.save_png(path + "_placed.png")
+	await main.save_png(path + "_torch.png")
 
 	# Swimming: drop into the sea.
 	var sea := _find_sea(floori(p.position.x), floori(p.position.z))
@@ -159,11 +245,89 @@ func _run() -> void:
 	_touch(6, t.button_pos("jump"), false)
 	_check("swims_up", p.position.y > deep + 1.0, "y %.2f -> %.2f" % [deep, p.position.y])
 
-	await _wait(3.0)
+	await _wait(2.0)
 	_check("music_plays", main.audio.notes_played >= 3, "notes=%d" % main.audio.notes_played)
 
 	print("SELFTEST %s" % ("ALL PASS" if failed == 0 else "%d FAILED" % failed))
 	get_tree().quit(1 if failed > 0 else 0)
+
+
+## Checks that need no world: recipes, drops, tool speed.
+func _rules() -> void:
+	var s := Items.STICK
+	var pl := Blocks.PLANKS
+	var st := Blocks.STONE
+	_recipe("recipe_table_planks", [Blocks.WOOD], 3, [pl, 4])
+	_recipe("recipe_anywhere_in_grid", [0, 0, 0, 0, 0, 0, 0, 0, Blocks.WOOD], 3, [pl, 4])
+	_recipe("recipe_table_sticks", [pl, 0, pl], 3, [s, 4])
+	_recipe("recipe_table_workbench", [pl, pl, pl, pl], 3, [Blocks.WORKBENCH, 1])
+	_recipe("recipe_table_torch", [Items.COAL_LUMP, 0, s], 3, [Blocks.TORCH, 4])
+	_recipe("recipe_table_furnace", [st, st, st, st, 0, st, st, st, st], 3, [Blocks.FURNACE, 1])
+	_recipe("recipe_wood_axe", [pl, pl, 0, pl, s, 0, 0, s, 0], 3, [Items.WOOD_AXE, 1])
+	_recipe("recipe_axe_mirrored", [pl, pl, 0, s, pl, 0, s, 0, 0], 3, [Items.WOOD_AXE, 1])
+	_recipe("recipe_wood_shovel", [pl, 0, 0, s, 0, 0, s, 0, 0], 3, [Items.WOOD_SHOVEL, 1])
+	_recipe("recipe_wood_sword", [0, pl, 0, 0, pl, 0, 0, s, 0], 3, [Items.WOOD_SWORD, 1])
+	_recipe("recipe_stone_pick", [st, st, st, 0, s, 0, 0, s, 0], 3, [Items.STONE_PICK, 1])
+	_recipe("recipe_stone_axe", [st, st, 0, st, s, 0, 0, s, 0], 3, [Items.STONE_AXE, 1])
+	_recipe("recipe_stone_shovel", [0, 0, st, 0, 0, s, 0, 0, s], 3, [Items.STONE_SHOVEL, 1])
+	_recipe("recipe_stone_sword", [st, 0, 0, st, 0, 0, s, 0, 0], 3, [Items.STONE_SWORD, 1])
+	_recipe("recipe_wrong_shape", [pl, 0, 0, pl], 3, [])
+	_recipe("recipe_mixed_materials", [pl, st, pl, 0, s, 0, 0, s, 0], 3, [])
+	_recipe("recipe_3x3_not_in_2x2", [st, st, st, st, 0, st, st, st, st], 2, [])
+
+	_check("stone_needs_pickaxe", Items.drop_for(st, 0).is_empty() and Items.drop_for(st, Items.WOOD_AXE).is_empty()
+			and Items.drop_for(st, Items.WOOD_PICK) == [st, 1])
+	_check("iron_needs_stone_pick", Items.drop_for(Blocks.IRON, Items.WOOD_PICK).is_empty()
+			and Items.drop_for(Blocks.IRON, Items.STONE_PICK) == [Blocks.IRON, 1])
+	_check("grass_drops_dirt", Items.drop_for(Blocks.GRASS, 0) == [Blocks.DIRT, 1])
+	_check("coal_drops_lump", Items.drop_for(Blocks.COAL, Items.WOOD_PICK) == [Items.COAL_LUMP, 1])
+	var hand := Items.mine_time(st, 0)
+	var wood := Items.mine_time(st, Items.WOOD_PICK)
+	var stone := Items.mine_time(st, Items.STONE_PICK)
+	_check("better_tool_is_faster", stone < wood and wood < hand, "%.2f < %.2f < %.2f" % [stone, wood, hand])
+	_check("wrong_tool_no_bonus", Items.mine_time(st, Items.STONE_AXE) == hand
+			and Items.mine_time(Blocks.WOOD, Items.STONE_AXE) < Items.mine_time(Blocks.WOOD, 0))
+	_check("bedrock_unbreakable", Items.mine_time(Blocks.BEDROCK, Items.STONE_PICK) < 0.0)
+
+	var inv: RefCounted = load("res://scripts/inventory.gd").new()
+	var left: int = inv.add(Blocks.DIRT, 70)
+	_check("stacks_cap_at_64", left == 0 and inv.counts[0] == 64 and inv.counts[1] == 6)
+	inv.add(Items.WOOD_PICK, 2)
+	_check("tools_do_not_stack", inv.counts[2] == 1 and inv.counts[3] == 1 and inv.durs[2] == 60)
+	left = inv.add(Blocks.STONE, 64 * 40)
+	_check("full_inventory_rejects", left == 64 * 40 - 64 * 32 and not inv.can_add(Blocks.STONE) and inv.can_add(Blocks.DIRT),
+			"left=%d" % left)
+
+
+func _recipe(test: String, cells: Array, n: int, expect: Array) -> void:
+	var grid := PackedInt32Array()
+	grid.resize(9)
+	# cells are given for an n-wide grid when shorter than 9, else as the full 3x3.
+	if cells.size() == 9:
+		for i in 9:
+			grid[i] = cells[i]
+	else:
+		for i in cells.size():
+			@warning_ignore("integer_division")
+			grid[(i / 2) * 3 + i % 2] = cells[i]
+	var got := Crafting.find(grid, n)
+	_check(test, got == expect, "got %s" % str(got))
+
+
+## Turns the view until the targeted face has a free cell the player does not stand in.
+func _aim_at_free_cell() -> Vector3i:
+	var p: Node3D = main.player
+	var it: Node3D = main.interaction
+	p.cam.rotation.x = -0.9
+	for attempt in 16:
+		await _frames(3)
+		if it.has_target and not p.intersects_cell(it.place_cell) \
+				and main.world.get_block(it.place_cell.x, it.place_cell.y, it.place_cell.z) == Blocks.AIR:
+			return it.place_cell
+		p.rotate_y(PI / 4.0)
+		if attempt % 8 == 7:
+			p.cam.rotation.x += 0.25
+	return it.place_cell
 
 
 func _find_sea(x0: int, z0: int) -> Vector2i:
@@ -178,7 +342,7 @@ func _find_sea(x0: int, z0: int) -> Vector2i:
 func _check(test: String, ok: bool, detail := "") -> void:
 	if not ok:
 		failed += 1
-	print("SELFTEST %-24s %s  %s" % [test, "PASS" if ok else "FAIL", detail])
+	print("SELFTEST %-26s %s  %s" % [test, "PASS" if ok else "FAIL", detail])
 
 
 func _touch(index: int, pos: Vector2, pressed: bool) -> void:
@@ -195,6 +359,24 @@ func _drag(index: int, pos: Vector2, relative: Vector2) -> void:
 	e.position = _xf * pos
 	e.relative = _xf.basis_xform(relative)
 	Input.parse_input_event(e)
+
+
+func _tap(pos: Vector2) -> void:
+	_finger += 1
+	_touch(_finger, pos, true)
+	await _frames(2)
+	_touch(_finger, pos, false)
+	await _frames(2)
+
+
+## Holds a touch button for a number of frames.
+func _hold(button: String, frames: int) -> void:
+	var pos: Vector2 = main.touch.button_pos(button)
+	_finger += 1
+	_touch(_finger, pos, true)
+	await _frames(frames)
+	_touch(_finger, pos, false)
+	await _frames(2)
 
 
 func _frame() -> void:

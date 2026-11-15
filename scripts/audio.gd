@@ -129,6 +129,7 @@ func _synthesise_all() -> void:
 		"place": _wav(_burst(rng, 0.12, 0.15, 30.0, 140.0, 0.8)),
 		"step": _wav(_burst(rng, 0.09, 0.12, 40.0, 70.0, 0.3)),
 		"splash": _wav(_splash(rng)),
+		"pop": _wav(_pop()),
 		"pluck": _wav(_pluck()),
 		"pad": _wav(_pad()),
 	}
@@ -167,6 +168,19 @@ func _splash(rng: RandomNumberGenerator) -> PackedFloat32Array:
 		var lowpass := lerpf(0.55, 0.05, minf(t / 0.4, 1.0))
 		y += lowpass * (rng.randf_range(-1.0, 1.0) - y)
 		out[i] = y * exp(-t * 7.0) * minf(t / 0.004, 1.0)
+	return out
+
+
+## Short rising blip for picking up and crafting.
+func _pop() -> PackedFloat32Array:
+	var n := int(0.09 * RATE)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var phase := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		phase += TAU * lerpf(520.0, 980.0, t / 0.09) / RATE
+		out[i] = sin(phase) * exp(-t * 28.0) * minf(t / 0.003, 1.0)
 	return out
 
 

@@ -25,8 +25,13 @@ Targets: macOS, Windows, Android, iOS, web. Public repository, MIT license.
 | `scripts/world.gd` | Chunk manager: worker threads, mesh upload, load and unload |
 | `scripts/player.gd` | First-person player: walk, jump, gravity, swim, block collision |
 | `scripts/interaction.gd` | Ray through blocks, outline, long-press mining with crack, placing |
-| `scripts/hotbar.gd` | Block slots: keys 1-9, wheel, tap |
-| `scripts/touch_ui.gd` | Virtual joystick, jump / mine / place buttons, drag to look |
+| `scripts/items.gd` | Item ids, tool rules, drops, mining time, icon drawing |
+| `scripts/inventory.gd` | 36 slots: id, count, tool durability. Slots 0-8 are the hotbar |
+| `scripts/crafting.gd` | Shaped recipes, matched anywhere in the grid and mirrored |
+| `scripts/inventory_ui.gd` | Inventory and crafting screen, 2x2 and 3x3, mouse and touch |
+| `scripts/drops.gd` | Items lying in the world: fall, fly to the player, get collected |
+| `scripts/hotbar.gd` | Shows inventory slots 0-8: keys 1-9, wheel, tap |
+| `scripts/touch_ui.gd` | Virtual joystick, jump / mine / place / bag buttons, drag to look |
 | `scripts/audio.gd` | Synthesised sound effects and generative music |
 | `scripts/selftest.gd` | Automated play test through simulated touch events |
 | `docs/` | Screenshot now. Later the GitHub Pages site |
@@ -64,10 +69,29 @@ The scene tree is built in code. Keep `.tscn` files minimal.
 - `world.set_block()` is the only way to edit blocks. It copies the chunk array
   (a worker may still read the old one), keeps edited chunks in memory after unload,
   and queues an urgent re-mesh of the chunk and of the neighbour across a border.
-- Mining time is `Blocks.HARDNESS[id]` seconds. Negative means unbreakable.
-  Mined blocks vanish and hotbar blocks are endless until stage 4 adds an inventory.
-- Add a block: extend the enum, `TILE_OF`, `HARDNESS` and `PITCH` in `blocks.gd`,
-  and paint its tile in `make_atlas()`. The atlas has 16 tiles, 15 are used.
+- Add a block: extend the enum and every per-block table in `blocks.gd` (`TILE_OF`,
+  `HARDNESS`, `TOOL`, `MIN_TIER`, `SOLID`, `SEE_THROUGH`, `PITCH`), and paint its
+  tiles in `make_atlas()`. The atlas is 8 x 8 tiles: 0-31 block faces, 32+ item icons.
+- A torch is a block with its own shape in `mesher.gd`. It is not solid and does
+  not hide neighbour faces. It gives no light yet: there is no lighting system.
+- A furnace can be crafted and placed. It does not smelt yet.
+
+## Items and crafting
+
+- Item ids below 100 are blocks, with the same id. Ids from 100 are `items.gd` items.
+  Add an item: a constant, an icon pattern painted at tile `ICON_BASE + id - 100`,
+  and a recipe in `crafting.gd`.
+- Do not name a static function `is_tool`: `Script.is_tool()` shadows it when
+  called through a preloaded script constant.
+- `Items.mine_time()` and `Items.drop_for()` hold all tool rules: matching tool
+  type is 3x (wood) or 5x (stone) faster; `MIN_TIER` is the pickaxe tier needed
+  for a block to drop anything.
+- Mining spawns a drop through `drops.gd`. Placing takes one item from the selected
+  hotbar slot. Only block items can be placed.
+- Inventory screen rules: tap picks up or puts down a stack; a tap on a crafting
+  cell puts down one item; right-click puts down one or picks up half; a tap on the
+  result crafts once into the inventory. Closing returns grid and hand to the inventory.
+- While a menu is open: `player.ui_open` is true and `touch.enabled` is false.
 - Audio is synthesised at startup on a thread, 22050 Hz mono. Music replays two
   instrument samples at different pitches from a sequencer. Do not add audio files.
 
@@ -100,9 +124,11 @@ $G --path . -- --shot=/tmp/m.png --pos=0,100,0 --look=-25,-90 --fly=20 --dist=5 
 
 `--shot` opens a real window, turns off vsync and player input, waits for the world
 to load, measures 5 seconds, saves a PNG, prints one `SHOT` line and quits.
-`--selftest` plays the game with simulated touches: joystick, look, jump, mining,
-placing, swimming, music. It must end with `SELFTEST ALL PASS`. It writes
-`PATH_crack.png` and `PATH_placed.png`. Add a check there for every new mechanic.
+`--selftest` checks the rule tables (recipes, drops, tool speed, stacking) and then
+plays the game with simulated touches: joystick, look, jump, mining, item pickup,
+placing, both crafting screens, tools, torch, swimming, music. It must end with
+`SELFTEST ALL PASS`. It writes `PATH_crack.png`, `PATH_inventory.png`,
+`PATH_workbench.png` and `PATH_torch.png`. Add a check there for every new mechanic.
 
 Check after every change: no script errors, `SELFTEST ALL PASS`, `floor=true` in
 the first `--shot` command, the PNGs look right, and `run fps` and `worst frame`

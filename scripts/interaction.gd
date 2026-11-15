@@ -5,6 +5,10 @@ extends Node3D
 ## selected hotbar block against the face that was hit.
 
 const Blocks := preload("res://scripts/blocks.gd")
+const Items := preload("res://scripts/items.gd")
+
+## The player used the place action on a workbench.
+signal workbench_used
 
 const REACH := 5.0
 const CRACK_STAGES := 8
@@ -38,6 +42,8 @@ var player: Node3D
 var hotbar: Control
 var touch: Control
 var audio: Node
+var inventory: RefCounted
+var drops: Node3D
 
 var has_target := false
 var target := Vector3i.ZERO
@@ -77,7 +83,7 @@ func _process(delta: float) -> void:
 	if touch != null and touch.active:
 		mine = mine or touch.mine
 		place = place or touch.place
-	if player.frozen:
+	if player.frozen or player.ui_open:
 		mine = false
 		place = false
 	_update_mining(delta, mine)
@@ -93,24 +99,40 @@ func _update_mining(delta: float, held: bool) -> void:
 		_progress = 0.0
 		_tick = 0.0
 	var id: int = world.get_block(target.x, target.y, target.z)
-	var hardness := Blocks.HARDNESS[id]
-	if hardness < 0.0:
+	var tool_id: int = hotbar.selected_id()
+	var time := Items.mine_time(id, tool_id)
+	if time < 0.0:
 		_stop_mining()
 		return
-	_progress += delta / maxf(hardness, 0.05)
+	_progress += delta / maxf(time, 0.05)
 	_tick -= delta
 	if _tick <= 0.0:
 		_tick = DIG_TICK
 		audio.play("dig", Blocks.PITCH[id] * randf_range(0.95, 1.05), -7.0)
 	if _progress >= 1.0:
-		world.set_block(target.x, target.y, target.z, Blocks.AIR)
-		audio.play("break", Blocks.PITCH[id], -2.0)
+		_break_block(target, id, tool_id)
 		_stop_mining()
 		return
 	crack_stage = mini(int(_progress * CRACK_STAGES), CRACK_STAGES - 1)
 	_crack.position = Vector3(target) + Vector3(0.5, 0.5, 0.5)
 	_crack_mat.set_shader_parameter("stage", float(crack_stage))
 	_crack.visible = true
+
+
+## Removes the block, drops its item, and wears the held tool.
+func _break_block(cell: Vector3i, id: int, held: int) -> void:
+	world.set_block(cell.x, cell.y, cell.z, Blocks.AIR)
+	audio.play("break", Blocks.PITCH[id], -2.0)
+	var centre := Vector3(cell) + Vector3(0.5, 0.5, 0.5)
+	var drop := Items.drop_for(id, held)
+	if not drop.is_empty():
+		drops.spawn(centre, drop[0], drop[1])
+	# A torch cannot stand on nothing.
+	if world.get_block(cell.x, cell.y + 1, cell.z) == Blocks.TORCH:
+		world.set_block(cell.x, cell.y + 1, cell.z, Blocks.AIR)
+		drops.spawn(centre + Vector3(0, 1, 0), Blocks.TORCH, 1)
+	if Items.is_tool_item(held) and inventory.damage(hotbar.selected):
+		audio.play("break", 1.8, -4.0)
 
 
 func _stop_mining() -> void:
@@ -129,14 +151,21 @@ func _update_placing(delta: float, held: bool) -> void:
 	_place_timer = PLACE_REPEAT
 	if not has_target:
 		return
+	if world.get_block(target.x, target.y, target.z) == Blocks.WORKBENCH:
+		_place_timer = 0.6
+		workbench_used.emit()
+		return
+	var id: int = hotbar.selected_id()
+	if not Items.is_block(id):
+		return
 	var c := place_cell
 	var current: int = world.get_block(c.x, c.y, c.z)
 	if current != Blocks.AIR and current != Blocks.WATER:
 		return
 	if player.intersects_cell(c):
 		return
-	var id: int = hotbar.selected_id()
 	if world.set_block(c.x, c.y, c.z, id):
+		inventory.take(hotbar.selected, 1)
 		audio.play("place", Blocks.PITCH[id], -3.0)
 
 

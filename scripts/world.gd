@@ -222,7 +222,7 @@ func get_block(x: int, y: int, z: int) -> int:
 ## Unloaded chunks count as solid, so nothing falls through missing terrain.
 func is_solid(x: int, y: int, z: int) -> bool:
 	var id := get_block(x, y, z)
-	return id != Blocks.AIR and id != Blocks.WATER
+	return id < 0 or Blocks.SOLID[id] == 1
 
 
 func _schedule() -> void:

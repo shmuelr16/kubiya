@@ -8,6 +8,8 @@ const Blocks := preload("res://scripts/blocks.gd")
 
 const AIR := Blocks.AIR
 const WATER := Blocks.WATER
+const TORCH := Blocks.TORCH
+const INV := 1.0 / Blocks.ATLAS_TILES
 const UV_PAD := 0.002
 const WATER_DROP := 0.12
 
@@ -30,6 +32,7 @@ var cv := PackedVector3Array()
 var cuv := PackedVector2Array()
 var shade := PackedColorArray()
 var tiles := Blocks.TILE_OF
+var see := Blocks.SEE_THROUGH
 
 var sv := PackedVector3Array()
 var su := PackedVector2Array()
@@ -72,23 +75,26 @@ func build(d: PackedByteArray, nx: PackedByteArray, px: PackedByteArray,
 				var id := d[i]
 				if id == AIR:
 					continue
+				if id == TORCH:
+					_emit_torch(x, y, z)
+					continue
 				var nb := d[i + 1] if y < 127 else AIR
-				if (nb == AIR or nb == WATER) and nb != id:
+				if see[nb] == 1 and nb != id:
 					_emit(2, x, y, z, id)
 				nb = d[i - 1] if y > 0 else id
-				if (nb == AIR or nb == WATER) and nb != id:
+				if see[nb] == 1 and nb != id:
 					_emit(3, x, y, z, id)
 				nb = d[i + 128] if x < 15 else px[i - 1920]
-				if (nb == AIR or nb == WATER) and nb != id:
+				if see[nb] == 1 and nb != id:
 					_emit(0, x, y, z, id)
 				nb = d[i - 128] if x > 0 else nx[i + 1920]
-				if (nb == AIR or nb == WATER) and nb != id:
+				if see[nb] == 1 and nb != id:
 					_emit(1, x, y, z, id)
 				nb = d[i + 2048] if z < 15 else pz[i - 30720]
-				if (nb == AIR or nb == WATER) and nb != id:
+				if see[nb] == 1 and nb != id:
 					_emit(4, x, y, z, id)
 				nb = d[i - 2048] if z > 0 else nz[i + 30720]
-				if (nb == AIR or nb == WATER) and nb != id:
+				if see[nb] == 1 and nb != id:
 					_emit(5, x, y, z, id)
 	return {"sv": sv, "su": su, "sc": sc, "si": si, "wv": wv, "wi": wi}
 
@@ -112,7 +118,7 @@ func _emit(f: int, x: int, y: int, z: int, id: int) -> void:
 		wi.append(s + 3)
 		return
 	var t := tiles[id * 3 + SLOT[f]]
-	var tb := Vector2((t & 3) * 0.25, (t >> 2) * 0.25)
+	var tb := Vector2((t & 7) * INV, (t >> 3) * INV)
 	var col := shade[f]
 	var n := sv.size()
 	sv.append(b + cv[k])
@@ -133,3 +139,28 @@ func _emit(f: int, x: int, y: int, z: int, id: int) -> void:
 	si.append(n)
 	si.append(n + 2)
 	si.append(n + 3)
+
+
+## A torch is a thin post, 2 x 10 x 2 pixels, in the middle of its cell.
+## Its UVs cover only the stick-and-flame pixels of the torch tile.
+func _emit_torch(x: int, y: int, z: int) -> void:
+	var t := tiles[TORCH * 3]
+	var tile := Vector2(t & 7, t >> 3)
+	var base := Vector3(x + 7.0 / 16.0, y, z + 7.0 / 16.0)
+	var size := Vector3(2.0 / 16.0, 10.0 / 16.0, 2.0 / 16.0)
+	for f in 6:
+		var k := f * 4
+		var cap := f == 2 or f == 3
+		var n := sv.size()
+		for c in 4:
+			sv.append(base + cv[k + c] * size)
+			var st := cuv[k + c] * float(Blocks.ATLAS_TILES)
+			var v := 6.0 / 16.0 + st.y * (2.0 if cap else 10.0) / 16.0
+			su.append((tile + Vector2(7.0 / 16.0 + st.x * 2.0 / 16.0, v)) * INV)
+			sc.append(shade[f])
+		si.append(n)
+		si.append(n + 1)
+		si.append(n + 2)
+		si.append(n)
+		si.append(n + 2)
+		si.append(n + 3)

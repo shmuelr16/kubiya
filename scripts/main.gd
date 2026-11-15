@@ -19,17 +19,23 @@ const Interaction := preload("res://scripts/interaction.gd")
 const Hotbar := preload("res://scripts/hotbar.gd")
 const TouchUI := preload("res://scripts/touch_ui.gd")
 const GameAudio := preload("res://scripts/audio.gd")
+const Inventory := preload("res://scripts/inventory.gd")
+const InventoryUI := preload("res://scripts/inventory_ui.gd")
+const Drops := preload("res://scripts/drops.gd")
 const SelfTest := preload("res://scripts/selftest.gd")
 
 const FOG_COLOR := Color(0.70, 0.84, 0.96)
 const HELP := "Click: capture mouse  |  WASD: move  |  Space: jump / swim  |  Shift: run  |  " \
-		+ "Hold left: mine  |  Right: place  |  1-9 / wheel: block  |  M: music  |  Esc: release"
+		+ "Hold left: mine  |  Right: place / use  |  1-9 / wheel: slot  |  E: inventory  |  M: music  |  Esc: release"
 
 var world: Node3D
 var player: Node3D
 var interaction: Node3D
 var audio: Node
 var hotbar: Control
+var inventory: RefCounted
+var inventory_ui: Control
+var drops: Node3D
 var touch: Control
 var hud: Label
 var help: Label
@@ -37,6 +43,7 @@ var underwater: ColorRect
 var fixed_camera := false
 var spawn_xz := Vector2i.ZERO
 var fly_speed := 0.0
+var _was_captured := false
 
 
 func _ready() -> void:
@@ -48,6 +55,7 @@ func _ready() -> void:
 	audio = GameAudio.new()
 	audio.name = "Audio"
 	add_child(audio)
+	inventory = Inventory.new()
 
 	world = World.new()
 	world.name = "World"
@@ -67,6 +75,15 @@ func _ready() -> void:
 	add_child(player)
 	player.cam.far = (world.view_dist + 2) * 16.0
 
+	drops = Drops.new()
+	drops.name = "Drops"
+	drops.world = world
+	drops.player = player
+	drops.inventory = inventory
+	drops.audio = audio
+	drops.atlas = world.atlas
+	add_child(drops)
+
 	_build_sky()
 	_build_hud()
 	player.touch = touch
@@ -78,6 +95,9 @@ func _ready() -> void:
 	interaction.hotbar = hotbar
 	interaction.touch = touch
 	interaction.audio = audio
+	interaction.inventory = inventory
+	interaction.drops = drops
+	interaction.workbench_used.connect(open_inventory.bind(3))
 	add_child(interaction)
 
 	if args.has("pos"):
@@ -110,13 +130,34 @@ func _ready() -> void:
 func set_input_enabled(on: bool) -> void:
 	player.input_enabled = on
 	hotbar.input_enabled = on
+	inventory_ui.input_enabled = on
+
+
+func open_inventory(grid: int) -> void:
+	if inventory_ui.visible or player.frozen:
+		return
+	_was_captured = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	player.ui_open = true
+	touch.enabled = false
+	inventory_ui.open(grid)
+
+
+func _on_inventory_closed() -> void:
+	player.ui_open = false
+	touch.enabled = true
+	if _was_captured:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not player.input_enabled:
 		return
-	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_M:
-		audio.toggle_music()
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.physical_keycode == KEY_M:
+			audio.toggle_music()
+		elif event.physical_keycode == KEY_E:
+			open_inventory(2)
 
 
 func _process(delta: float) -> void:
@@ -128,7 +169,10 @@ func _process(delta: float) -> void:
 	var eye: Vector3 = player.cam.global_position
 	underwater.visible = world.get_block(floori(eye.x), floori(eye.y), floori(eye.z)) == Blocks.WATER
 	help.visible = not touch.active
-	hud.text = "Kubiya 0.3  |  %d FPS  |  %d chunks  |  %dk quads  |  %d, %d, %d" % [
+	if touch.bag_pressed:
+		touch.bag_pressed = false
+		open_inventory(2)
+	hud.text = "Kubiya 0.4  |  %d FPS  |  %d chunks  |  %dk quads  |  %d, %d, %d" % [
 		Engine.get_frames_per_second(), world.chunks.size(), world.total_quads / 1000.0,
 		floori(p.x), floori(p.y), floori(p.z)]
 
@@ -220,11 +264,21 @@ func _build_hud() -> void:
 
 	hotbar = Hotbar.new()
 	hotbar.atlas = world.atlas
+	hotbar.inventory = inventory
 	layer.add_child(hotbar)
 
 	touch = TouchUI.new()
 	touch.hotbar = hotbar
 	layer.add_child(touch)
+
+	inventory_ui = InventoryUI.new()
+	inventory_ui.inventory = inventory
+	inventory_ui.atlas = world.atlas
+	inventory_ui.audio = audio
+	inventory_ui.drops = drops
+	inventory_ui.player = player
+	inventory_ui.closed.connect(_on_inventory_closed)
+	layer.add_child(inventory_ui)
 
 
 func _screenshot(path: String) -> void:

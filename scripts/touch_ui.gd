@@ -5,11 +5,13 @@ extends Control
 ##   Anywhere else: drag to look. Dragging from the mine button also looks,
 ##   so the player can aim while mining.
 ## Appears on touchscreen devices, or after the first touch event.
-## Other scripts read `move`, `jump`, `mine`, `place` and call `take_look()`.
+## A bag button in the top right corner opens the inventory.
+## Other scripts read `move`, `jump`, `mine`, `place`, `bag_pressed` and call `take_look()`.
 
 const STICK_RADIUS := 90.0
 const KNOB_RADIUS := 38.0
 const BUTTON_RADIUS := 54.0
+const BAG_RADIUS := 36.0
 
 var hotbar: Control
 var active := false
@@ -17,6 +19,14 @@ var move := Vector2.ZERO
 var jump := false
 var mine := false
 var place := false
+## Set on a tap of the bag button. The reader clears it.
+var bag_pressed := false
+## False while a menu is open: touches are ignored and nothing is drawn.
+var enabled := true:
+	set(v):
+		enabled = v
+		_reset()
+		queue_redraw()
 
 var _look := Vector2.ZERO
 var _stick_id := -1
@@ -53,7 +63,24 @@ func stick_home() -> Vector2:
 	return Vector2(150.0, size.y - 150.0)
 
 
+func bag_pos() -> Vector2:
+	return Vector2(size.x - 60.0, 64.0)
+
+
+func _reset() -> void:
+	move = Vector2.ZERO
+	jump = false
+	mine = false
+	place = false
+	_look = Vector2.ZERO
+	_stick_id = -1
+	_look_id = -1
+	_button_ids.clear()
+
+
 func _input(event: InputEvent) -> void:
+	if not enabled:
+		return
 	if event is InputEventScreenTouch:
 		active = true
 		if event.pressed:
@@ -75,6 +102,9 @@ func _touch_down(index: int, pos: Vector2) -> void:
 		if slot >= 0:
 			hotbar.select(slot)
 			return
+	if pos.distance_to(bag_pos()) <= BAG_RADIUS * 1.2:
+		bag_pressed = true
+		return
 	for button: String in ["jump", "mine", "place"]:
 		if pos.distance_to(button_pos(button)) <= BUTTON_RADIUS * 1.15:
 			_button_ids[index] = button
@@ -110,8 +140,16 @@ func _set_button(button: String, down: bool) -> void:
 
 
 func _draw() -> void:
-	if not active:
+	if not active or not enabled:
 		return
+	# Bag button: a small chest.
+	var b := bag_pos()
+	draw_circle(b, BAG_RADIUS, Color(1, 1, 1, 0.14))
+	draw_arc(b, BAG_RADIUS, 0.0, TAU, 32, Color(1, 1, 1, 0.5), 3.0, true)
+	draw_rect(Rect2(b - Vector2(17, 12), Vector2(34, 26)), Color(1, 1, 1, 0.9), false, 4.0)
+	draw_line(b + Vector2(-17, -2), b + Vector2(17, -2), Color(1, 1, 1, 0.9), 4.0)
+	draw_rect(Rect2(b - Vector2(4, 6), Vector2(8, 8)), Color(1, 1, 1, 0.9))
+
 	var center := _stick_origin if _stick_id != -1 else stick_home()
 	draw_circle(center, STICK_RADIUS, Color(1, 1, 1, 0.10))
 	draw_arc(center, STICK_RADIUS, 0.0, TAU, 48, Color(1, 1, 1, 0.45), 3.0, true)

@@ -37,6 +37,8 @@ var blocked := false
 var frozen := true
 ## Tests switch this off so that stray key presses and clicks cannot interfere.
 var input_enabled := true
+## A menu is open: the player stands still and ignores input.
+var ui_open := false
 
 var _step_acc := 0.0
 var _fall_speed := 0.0
@@ -52,7 +54,7 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not input_enabled:
+	if not input_enabled or ui_open:
 		return
 	if event is InputEventMouseButton and event.pressed:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -194,4 +196,4 @@ func _sound(sound: String, pitch: float, db: float) -> void:
 
 
 func _down(key: Key) -> bool:
-	return input_enabled and Input.is_physical_key_pressed(key)
+	return input_enabled and not ui_open and Input.is_physical_key_pressed(key)
