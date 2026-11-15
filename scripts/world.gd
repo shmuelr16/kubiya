@@ -226,6 +226,26 @@ func _torches_for(pos: Vector2i) -> PackedInt32Array:
 	return out
 
 
+## Edited chunks, for saving: Vector2i -> [data, max_y].
+func edits() -> Dictionary:
+	return _modified
+
+
+## Restores edited chunks from a save. Call before the node enters the tree.
+func load_edits(modified: Dictionary) -> void:
+	_modified = modified
+	_torches.clear()
+	for pos: Vector2i in modified:
+		var data: PackedByteArray = modified[pos][0]
+		var list := PackedInt32Array()
+		var at := data.find(Blocks.TORCH)
+		while at != -1:
+			list.append(at)
+			at = data.find(Blocks.TORCH, at + 1)
+		if not list.is_empty():
+			_torches[pos] = list
+
+
 func _mark_dirty(pos: Vector2i) -> void:
 	var c: Chunk = chunks.get(pos)
 	if c == null or c.state == S_GENERATING or c.state == S_DATA:

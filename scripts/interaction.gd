@@ -9,6 +9,8 @@ const Items := preload("res://scripts/items.gd")
 
 ## The player used the place action on a workbench.
 signal workbench_used
+## The player used the place action on a furnace at this cell.
+signal furnace_used(cell: Vector3i)
 
 const REACH := 5.0
 const CRACK_STAGES := 8
@@ -47,6 +49,7 @@ var audio: Node
 var inventory: RefCounted
 var drops: Node3D
 var mobs: Node3D
+var furnaces: Node
 
 var has_target := false
 var target := Vector3i.ZERO
@@ -153,6 +156,8 @@ func _break_block(cell: Vector3i, id: int, held: int) -> void:
 	var drop := Items.drop_for(id, held)
 	if not drop.is_empty():
 		drops.spawn(centre, drop[0], drop[1])
+	if id == Blocks.FURNACE and furnaces != null:
+		furnaces.remove(cell)
 	# A torch cannot stand on nothing.
 	if world.get_block(cell.x, cell.y + 1, cell.z) == Blocks.TORCH:
 		world.set_block(cell.x, cell.y + 1, cell.z, Blocks.AIR)
@@ -184,9 +189,14 @@ func _update_placing(delta: float, held: bool) -> void:
 		return
 	if not has_target:
 		return
-	if world.get_block(target.x, target.y, target.z) == Blocks.WORKBENCH:
+	var used: int = world.get_block(target.x, target.y, target.z)
+	if used == Blocks.WORKBENCH:
 		_place_timer = 0.6
 		workbench_used.emit()
+		return
+	if used == Blocks.FURNACE:
+		_place_timer = 0.6
+		furnace_used.emit(target)
 		return
 	var id: int = hotbar.selected_id()
 	if not Items.is_block(id):

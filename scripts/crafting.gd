@@ -17,7 +17,8 @@ static func recipes() -> Array:
 	_add(["PP", "PP"], {"P": Blocks.PLANKS}, Blocks.WORKBENCH, 1)
 	_add(["C", "S"], {"C": Items.COAL_LUMP, "S": s}, Blocks.TORCH, 4)
 	_add(["XXX", "X X", "XXX"], {"X": Blocks.STONE}, Blocks.FURNACE, 1)
-	for pair: Array in [[Blocks.PLANKS, Items.WOOD_PICK], [Blocks.STONE, Items.STONE_PICK]]:
+	for pair: Array in [[Blocks.PLANKS, Items.WOOD_PICK], [Blocks.STONE, Items.STONE_PICK],
+			[Items.IRON_INGOT, Items.IRON_PICK]]:
 		var key := {"M": pair[0], "S": s}
 		var base: int = pair[1]
 		_add(["MMM", " S ", " S "], key, base, 1)

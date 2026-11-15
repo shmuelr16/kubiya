@@ -16,10 +16,16 @@ const STONE_SHOVEL := 108
 const STONE_SWORD := 109
 const MEAT := 110
 const FRUIT := 111
+const IRON_INGOT := 112
+const COOKED_MEAT := 113
+const IRON_PICK := 114
+const IRON_AXE := 115
+const IRON_SHOVEL := 116
+const IRON_SWORD := 117
 
 const STACK := 64
-const DURABILITY: PackedInt32Array = [0, 60, 132]
-const SPEED: PackedFloat32Array = [1.0, 3.0, 5.0]
+const DURABILITY: PackedInt32Array = [0, 60, 132, 251]
+const SPEED: PackedFloat32Array = [1.0, 3.0, 5.0, 7.0]
 
 
 static func is_block(id: int) -> bool:
@@ -27,18 +33,48 @@ static func is_block(id: int) -> bool:
 
 
 static func is_tool_item(id: int) -> bool:
-	return id >= WOOD_PICK and id <= STONE_SWORD
+	return (id >= WOOD_PICK and id <= STONE_SWORD) or (id >= IRON_PICK and id <= IRON_SWORD)
 
 
 ## 0 none, 1 pickaxe, 2 axe, 3 shovel, 4 sword.
 static func tool_type(id: int) -> int:
+	if id >= IRON_PICK:
+		return id - IRON_PICK + 1 if id <= IRON_SWORD else 0
 	return (id - WOOD_PICK) % 4 + 1 if is_tool_item(id) else 0
 
 
-## 0 none, 1 wood, 2 stone.
+## 0 none, 1 wood, 2 stone, 3 iron.
 static func tool_tier(id: int) -> int:
+	if not is_tool_item(id):
+		return 0
+	if id >= IRON_PICK:
+		return 3
 	@warning_ignore("integer_division")
-	return (id - WOOD_PICK) / 4 + 1 if is_tool_item(id) else 0
+	return (id - WOOD_PICK) / 4 + 1
+
+
+## What the furnace turns the item into, or 0.
+static func smelt(id: int) -> int:
+	match id:
+		Blocks.IRON:
+			return IRON_INGOT
+		MEAT:
+			return COOKED_MEAT
+		Blocks.WOOD:
+			return COAL_LUMP
+	return 0
+
+
+## Seconds one item burns in a furnace. 0: not fuel.
+static func fuel_time(id: int) -> float:
+	match id:
+		COAL_LUMP:
+			return 48.0
+		Blocks.WOOD, Blocks.PLANKS, Blocks.WORKBENCH:
+			return 12.0
+		STICK:
+			return 6.0
+	return 0.0
 
 
 ## Hunger points restored by eating the item. 0: not food.
@@ -48,6 +84,8 @@ static func food_points(id: int) -> int:
 			return 6
 		FRUIT:
 			return 3
+		COOKED_MEAT:
+			return 10
 	return 0
 
 

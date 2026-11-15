@@ -1,27 +1,29 @@
 # Kubiya · קובייה
 
+![Title screen](docs/screenshot-title.png)
 ![Kubiya screenshot](docs/screenshot.png)
 ![Mining and building with touch controls](docs/screenshot-touch.png)
 ![Crafting a pickaxe at the workbench](docs/screenshot-crafting.png)
 ![Night sky with moon and stars](docs/screenshot-night.png)
 ![The four creatures](docs/screenshot-creatures.png)
 ![Torch light at night](docs/screenshot-torchlight.png)
+![Smelting iron in the furnace](docs/screenshot-furnace.png)
 
 **English** | [עברית](#עברית)
 
 Kubiya is an original, open-source 3D block sandbox game built with Godot 4 and GDScript.
-One codebase targets macOS, Windows, Android, iOS and the web browser.
+It is made for computers: macOS, Windows, and the web browser.
 
 Kubiya is not affiliated with Mojang or Microsoft and is not a copy of any existing game.
 The name, textures, sounds and music are original. Textures are generated in code.
 
 ## Status
 
-Early development. Stages 1 to 5 are done: an endless generated world with hills,
+Early development. Stages 1 to 6 are done: an endless generated world with hills,
 sea, caves, trees and ores; mining and building; item drops, inventory, crafting and
 tools; day and night with sun, moon and stars; sky and torch light; health and
-hunger; four original creatures; keyboard, mouse and touch controls; sound and music
-generated in code.
+hunger; four original creatures; smelting and iron tools; saved worlds; title and
+pause menus; sound and music generated in code.
 
 | Stage | Content | State |
 |-------|---------|-------|
@@ -30,9 +32,9 @@ generated in code.
 | 3 | First-person player, mining, building, hotbar, touch controls, sounds, music | Done |
 | 4 | Item drops, inventory, 2x2 and 3x3 crafting, tools, torch, workbench | Done |
 | 5 | Day and night, sky and torch light, health, hunger, creatures | Done |
-| 5b | Save and load, smelting, menus | Planned |
-| 6 | Builds: macOS `.dmg`, Windows, Android APK, iOS, web | Planned |
-| 7 | Download site on GitHub Pages with the browser version | Planned |
+| 6 | Save and load, furnace smelting, iron tools, title and pause menus | Done |
+| 7 | Builds: macOS `.dmg`, Windows, web | Planned |
+| 8 | Download site on GitHub Pages with the browser version | Planned |
 
 ## Controls
 
@@ -47,9 +49,12 @@ generated in code.
 | Choose hotbar slot | 1 to 9, or mouse wheel |
 | Inventory and 2x2 crafting | E |
 | Music on / off | M |
-| Release mouse | Esc |
+| Pause menu | Esc |
 
-Touch: joystick on the left, buttons for jump, mine (hold) and place on the right,
+The world is saved every minute, and when you leave through the menu or close the
+window. One world is kept; "New world" on the title screen replaces it.
+
+Touch screens also work: joystick on the left, buttons for jump, mine (hold) and place on the right,
 drag anywhere else to look, tap a hotbar slot to choose it, bag button for the inventory.
 
 ## Survival
@@ -80,13 +85,16 @@ up, tap a crafting cell to put down one item, tap the result to craft.
 | Workbench | 4 planks in a square |
 | 4 torches | coal above a stick |
 | Furnace | 8 stone in a ring |
-| Pickaxe | 3 planks or stone in a row, 2 sticks below the middle |
-| Axe | 3 planks or stone in an L, 2 sticks below |
-| Shovel | 1 plank or stone, 2 sticks below |
-| Sword | 2 planks or stone, 1 stick below |
+| Pickaxe | 3 planks, stone or iron ingots in a row, 2 sticks below the middle |
+| Axe | 3 planks, stone or iron ingots in an L, 2 sticks below |
+| Shovel | 1 plank, stone or iron ingot, 2 sticks below |
+| Sword | 2 planks, stone or iron ingots, 1 stick below |
 
-Stone and coal need a pickaxe. Iron, gold and crystal need a stone pickaxe.
-The right tool mines faster. Tools wear out.
+Stone and coal need a pickaxe. Iron and gold need a stone pickaxe. Crystal needs an
+iron pickaxe. The right tool mines faster. Tools wear out.
+
+Use a placed furnace to smelt: iron ore into iron ingots, meat into cooked meat,
+logs into coal. Fuel: coal, logs, planks, sticks.
 
 ## Run from source
 
@@ -107,14 +115,14 @@ MIT. See [LICENSE](LICENSE).
 ## עברית
 
 קובייה (Kubiya) הוא משחק בלוקים תלת־ממדי מקורי בקוד פתוח, בנוי ב־Godot 4 וב־GDScript.
-קוד אחד מיועד למק, ווינדוס, אנדרואיד, אייפון ודפדפן.
+המשחק מיועד למחשבים: מק, ווינדוס ודפדפן.
 
 המשחק אינו קשור ל־Mojang או ל־Microsoft ואינו העתק של משחק קיים.
 השם, הטקסטורות, הצלילים והמוזיקה מקוריים. הטקסטורות נוצרות בקוד.
 
 ### מצב
 
-פיתוח מוקדם. שלבים 1 עד 5 הושלמו: עולם אינסופי עם גבעות, ים, מערות, עצים ועפרות; כרייה ובנייה; פריטים נופלים, מלאי, יצירת חפצים וכלים; יום ולילה עם שמש, ירח וכוכבים; אור שמיים ואור לפידים; בריאות ורעב; ארבעה יצורים מקוריים; שליטה במקלדת, עכבר ומגע; צלילים ומוזיקה שנוצרים בקוד.
+פיתוח מוקדם. שלבים 1 עד 6 הושלמו: עולם אינסופי עם גבעות, ים, מערות, עצים ועפרות; כרייה ובנייה; פריטים נופלים, מלאי, יצירת חפצים וכלים; יום ולילה עם שמש, ירח וכוכבים; אור שמיים ואור לפידים; בריאות ורעב; ארבעה יצורים מקוריים; התכה וכלי ברזל; שמירת עולם; מסך פתיחה ותפריט השהיה; צלילים ומוזיקה שנוצרים בקוד.
 
 | שלב | תוכן | מצב |
 |-----|------|-----|
@@ -123,9 +131,9 @@ MIT. See [LICENSE](LICENSE).
 | 3 | שחקן בגוף ראשון, כרייה, בנייה, סרגל חפצים, שליטה במגע, צלילים, מוזיקה | בוצע |
 | 4 | פריטים נופלים, מלאי, יצירה 2x2 ו־3x3, כלים, לפיד, שולחן עבודה | בוצע |
 | 5 | יום ולילה, אור שמיים ולפידים, בריאות, רעב, יצורים | בוצע |
-| 5b | שמירה וטעינה, התכה, תפריטים | מתוכנן |
-| 6 | גרסאות: מק (`.dmg`), ווינדוס, אנדרואיד (APK), אייפון, דפדפן | מתוכנן |
-| 7 | אתר הורדה ב־GitHub Pages עם גרסת הדפדפן | מתוכנן |
+| 6 | שמירה וטעינה, התכה בתנור, כלי ברזל, מסך פתיחה ותפריט השהיה | בוצע |
+| 7 | גרסאות: מק (`.dmg`), ווינדוס, דפדפן | מתוכנן |
+| 8 | אתר הורדה ב־GitHub Pages עם גרסת הדפדפן | מתוכנן |
 
 ### מקשים
 
@@ -140,9 +148,12 @@ MIT. See [LICENSE](LICENSE).
 | בחירת משבצת בסרגל | 1 עד 9, או גלגלת |
 | מלאי ויצירה 2x2 | E |
 | מוזיקה | M |
-| שחרור העכבר | Esc |
+| תפריט השהיה | Esc |
 
-מגע: ג'ויסטיק משמאל, כפתורי קפיצה, כרייה (לחיצה ארוכה) והצבה מימין,
+העולם נשמר כל דקה, וגם ביציאה דרך התפריט או בסגירת החלון. נשמר עולם אחד;
+"New world" במסך הפתיחה מחליף אותו.
+
+גם מסכי מגע נתמכים: ג'ויסטיק משמאל, כפתורי קפיצה, כרייה (לחיצה ארוכה) והצבה מימין,
 גרירה בכל מקום אחר מזיזה את המבט, נגיעה במשבצת בסרגל בוחרת אותה, כפתור תיק פותח את המלאי.
 
 ### הישרדות
@@ -173,13 +184,16 @@ MIT. See [LICENSE](LICENSE).
 | שולחן עבודה | 4 קרשים בריבוע |
 | 4 לפידים | פחם מעל מקל |
 | תנור | 8 אבנים בטבעת |
-| מכוש | 3 קרשים או אבנים בשורה, 2 מקלות מתחת לאמצע |
-| גרזן | 3 קרשים או אבנים בצורת L, 2 מקלות מתחת |
-| את חפירה | קרש או אבן, 2 מקלות מתחת |
-| חרב | 2 קרשים או אבנים, מקל מתחת |
+| מכוש | 3 קרשים, אבנים או מטילי ברזל בשורה, 2 מקלות מתחת לאמצע |
+| גרזן | 3 קרשים, אבנים או מטילי ברזל בצורת L, 2 מקלות מתחת |
+| את חפירה | קרש, אבן או מטיל ברזל, 2 מקלות מתחת |
+| חרב | 2 קרשים, אבנים או מטילי ברזל, מקל מתחת |
 
-אבן ופחם דורשים מכוש. ברזל, זהב וקריסטל דורשים מכוש אבן.
+אבן ופחם דורשים מכוש. ברזל וזהב דורשים מכוש אבן. קריסטל דורש מכוש ברזל.
 הכלי המתאים כורה מהר יותר. כלים נשחקים.
+
+תנור מוצב מתיך: עפרת ברזל למטילי ברזל, בשר לבשר מבושל, בולי עץ לפחם.
+דלק: פחם, בולי עץ, קרשים, מקלות.
 
 ### הרצה מהקוד
 

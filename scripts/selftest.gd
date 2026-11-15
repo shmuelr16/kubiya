@@ -10,6 +10,9 @@ const Crafting := preload("res://scripts/crafting.gd")
 const Terrain := preload("res://scripts/terrain.gd")
 const Mesher := preload("res://scripts/mesher.gd")
 const Mobs := preload("res://scripts/mobs.gd")
+const Furnaces := preload("res://scripts/furnaces.gd")
+const SaveGame := preload("res://scripts/savegame.gd")
+const Menu := preload("res://scripts/menu.gd")
 
 var main: Node3D
 var path := ""
@@ -332,9 +335,11 @@ func _run() -> void:
 	await _until(func() -> bool: return p.on_floor, 4.0)
 
 	# --- Creatures ---
-	p.rotation.y = 0.0
+	var ahead := _flat_direction()
+	p.rotation.y = atan2(-ahead.x, -ahead.z)
 	p.cam.rotation.x = 0.0
-	var dundle: Object = mobs.spawn(Mobs.DUNDLE, p.position + Vector3(0, 1.5, -2.5))
+	var dundle: Object = mobs.spawn(Mobs.DUNDLE, p.position + ahead * 2.2 + Vector3(0, 0.2, 0))
+	dundle.think = 30.0
 	await _wait(0.8)
 	await _until(func() -> bool: return dundle.on_floor, 4.0)
 	_check("creature_stands_on_ground", dundle.on_floor and mobs.list.size() == 1, "pos=%s" % dundle.pos)
@@ -393,6 +398,98 @@ func _run() -> void:
 		mobs.spawn_tick()
 	_check("hostiles_dissolve_by_day", mobs.count(true) == 0, "hostile=%d" % mobs.count(true))
 	_check("day_spawns_passives", mobs.count(false) > 0 and mobs.count(false) <= Mobs.MAX_PASSIVE, "passive=%d" % mobs.count(false))
+	for m: Object in mobs.list.duplicate():
+		mobs._remove(m)
+
+	# --- Furnace screen ---
+	var fcell := Vector3i(3, 200, 3)
+	var fs: Dictionary = main.furnaces.state_at(fcell)
+	inv.add(Blocks.IRON, 2)
+	inv.add(Items.COAL_LUMP, 1)
+	main.open_furnace(fcell)
+	_check("furnace_screen_opens", ui.visible and ui.grid_n == 0)
+	await _tap(ui.inv_rect(inv.find(Blocks.WOOD)).get_center())
+	await _tap(ui.furnace_rect("fuel").get_center())
+	_check("wood_is_fuel", fs["fuel_id"] == Blocks.WOOD and fs["fuel_n"] == 2 and ui.held_count == 0)
+	await _tap(ui.furnace_rect("fuel").get_center())
+	await _tap(ui.inv_rect(30).get_center())
+	await _tap(ui.inv_rect(inv.find(Items.STICK)).get_center())
+	await _tap(ui.furnace_rect("in").get_center())
+	_check("furnace_rejects_unsmeltable", fs["in_n"] == 0 and ui.held_id == Items.STICK)
+	await _tap(ui.inv_rect(31).get_center())
+	await _tap(ui.inv_rect(inv.find(Blocks.IRON)).get_center())
+	await _tap(ui.furnace_rect("in").get_center())
+	await _tap(ui.inv_rect(inv.find(Items.COAL_LUMP)).get_center())
+	await _tap(ui.furnace_rect("fuel").get_center())
+	# The fire may already have taken the coal.
+	_check("furnace_loaded", fs["in_id"] == Blocks.IRON and fs["in_n"] == 2 and fs["fuel_id"] == Items.COAL_LUMP
+			and (fs["fuel_n"] == 1 or fs["burn"] > 0.0))
+	for i in 40:
+		Furnaces.step(fs, 0.1)
+	await _frames(2)
+	await main.save_png(path + "_furnace.png")
+	_check("furnace_burns", fs["burn"] > 0.0 and fs["fuel_n"] == 0 and fs["cook"] > 3.0, "burn=%.1f cook=%.1f" % [fs["burn"], fs["cook"]])
+	for i in 90:
+		Furnaces.step(fs, 0.1)
+	_check("furnace_smelts", fs["out_id"] == Items.IRON_INGOT and fs["out_n"] == 2 and fs["in_n"] == 0, "out=%d" % fs["out_n"])
+	await _tap(ui.furnace_rect("out").get_center())
+	_check("take_from_furnace", inv.count_of(Items.IRON_INGOT) == 2 and fs["out_n"] == 0)
+	await _tap(ui.close_rect().get_center())
+	fs["in_id"] = Blocks.IRON
+	fs["in_n"] = 3
+	var lying_before: int = drops.list.size()
+	main.furnaces.remove(fcell)
+	_check("mined_furnace_spills", drops.list.size() == lying_before + 1 and not main.furnaces.states.has(fcell))
+
+	# --- Pause menu ---
+	main.pause_game()
+	_check("pause_stops_the_game", get_tree().paused and main.menu.mode == Menu.PAUSE and main.menu.visible)
+	await _frames(3)
+	await main.save_png(path + "_pause.png")
+	main.resume_game()
+	_check("resume_continues", not get_tree().paused and main.menu.mode == Menu.HIDDEN)
+
+	# --- Save and load ---
+	var dir := "user://selftest_world"
+	SaveGame.erase(dir)
+	_check("no_save_yet", not SaveGame.exists(dir) and SaveGame.read(dir).is_empty())
+	_check("saving_off_in_tests", not main.save_game())
+	main.save_dir = dir
+	main.save_enabled = true
+	main.furnaces.state_at(Vector3i(1, 2, 3))["fuel_n"] = 5
+	_check("save_writes", main.save_game() and SaveGame.exists(dir))
+	main.save_enabled = false
+	var loaded := SaveGame.read(dir)
+	var meta: Dictionary = loaded.get("meta", {})
+	_check("save_keeps_seed_and_clock", int(meta.get("seed", -1)) == w.world_seed and is_equal_approx(meta["time"], dn.time))
+	var saved_pos: Array = meta["player"]["pos"]
+	_check("save_keeps_player", Vector3(saved_pos[0], saved_pos[1], saved_pos[2]).distance_to(p.position) < 0.001
+			and is_equal_approx(meta["player"]["health"], p.health) and int(meta["player"]["deaths"]) == 1)
+	var same_items := true
+	for i in inv.SIZE:
+		same_items = same_items and int(meta["inventory"]["ids"][i]) == inv.ids[i] \
+				and int(meta["inventory"]["counts"][i]) == inv.counts[i] and int(meta["inventory"]["durs"][i]) == inv.durs[i]
+	_check("save_keeps_inventory", same_items and inv.count_of(Items.IRON_INGOT) == 2)
+	var edits: Dictionary = w.edits()
+	var same_chunks: bool = loaded["modified"].size() == edits.size() and edits.size() > 0
+	for pos: Vector2i in edits:
+		same_chunks = same_chunks and loaded["modified"].has(pos) and loaded["modified"][pos][0] == edits[pos][0] \
+				and loaded["modified"][pos][1] == edits[pos][1]
+	_check("save_keeps_edited_chunks", same_chunks, "chunks=%d" % edits.size())
+	var fresh: Node3D = load("res://scripts/world.gd").new()
+	fresh.load_edits(loaded["modified"])
+	_check("load_finds_torches", fresh._torches.size() == w._torches.size() and w._torches.size() > 0, "chunks with torches=%d" % fresh._torches.size())
+	fresh.free()
+	var fresh_furnaces: Node = Furnaces.new()
+	fresh_furnaces.from_save(meta["furnaces"])
+	_check("save_keeps_furnaces", fresh_furnaces.states.has(Vector3i(1, 2, 3)) and fresh_furnaces.states[Vector3i(1, 2, 3)]["fuel_n"] == 5)
+	fresh_furnaces.free()
+	var broken := FileAccess.open(dir + "/meta.json", FileAccess.WRITE)
+	broken.store_string("{ not json")
+	broken.close()
+	_check("broken_save_is_ignored", SaveGame.read(dir).is_empty())
+	SaveGame.erase(dir)
+	_check("erase_removes_save", not SaveGame.exists(dir))
 
 	print("SELFTEST %s" % ("ALL PASS" if failed == 0 else "%d FAILED" % failed))
 	get_tree().quit(1 if failed > 0 else 0)
@@ -434,6 +531,37 @@ func _rules() -> void:
 	_check("wrong_tool_no_bonus", Items.mine_time(st, Items.STONE_AXE) == hand
 			and Items.mine_time(Blocks.WOOD, Items.STONE_AXE) < Items.mine_time(Blocks.WOOD, 0))
 	_check("bedrock_unbreakable", Items.mine_time(Blocks.BEDROCK, Items.STONE_PICK) < 0.0)
+
+	var ig := Items.IRON_INGOT
+	_recipe("recipe_iron_pick", [ig, ig, ig, 0, s, 0, 0, s, 0], 3, [Items.IRON_PICK, 1])
+	_recipe("recipe_iron_sword", [ig, 0, 0, ig, 0, 0, s, 0, 0], 3, [Items.IRON_SWORD, 1])
+	_check("iron_tool_rules", Items.tool_tier(Items.IRON_PICK) == 3 and Items.tool_type(Items.IRON_SWORD) == 4
+			and Items.tool_type(Items.IRON_AXE) == 2 and Items.max_durability(Items.IRON_SHOVEL) == 251
+			and Items.tool_tier(Items.MEAT) == 0 and not Items.is_tool_item(Items.IRON_INGOT)
+			and Items.mine_time(st, Items.IRON_PICK) < stone)
+	_check("crystal_needs_iron_pick", Items.drop_for(Blocks.CRYSTAL, Items.STONE_PICK).is_empty()
+			and Items.drop_for(Blocks.CRYSTAL, Items.IRON_PICK) == [Blocks.CRYSTAL, 1])
+	_check("smelting_table", Items.smelt(Blocks.IRON) == ig and Items.smelt(Items.MEAT) == Items.COOKED_MEAT
+			and Items.smelt(Blocks.WOOD) == Items.COAL_LUMP and Items.smelt(Blocks.DIRT) == 0
+			and Items.food_points(Items.COOKED_MEAT) > Items.food_points(Items.MEAT))
+
+	var f := Furnaces.new_state()
+	f["in_id"] = Blocks.IRON
+	f["in_n"] = 2
+	for i in 200:
+		Furnaces.step(f, 0.1)
+	_check("furnace_needs_fuel", f["out_n"] == 0 and f["in_n"] == 2)
+	f["fuel_id"] = Items.STICK
+	f["fuel_n"] = 1
+	for i in 200:
+		Furnaces.step(f, 0.1)
+	_check("fuel_runs_out", f["out_n"] == 1 and f["in_n"] == 1 and f["burn"] == 0.0 and f["cook"] == 0.0,
+			"out=%d after one stick" % f["out_n"])
+	f["out_id"] = Items.COAL_LUMP
+	f["fuel_n"] = 3
+	for i in 200:
+		Furnaces.step(f, 0.1)
+	_check("furnace_waits_for_free_output", f["out_n"] == 1 and f["fuel_n"] == 3)
 
 	var inv: RefCounted = load("res://scripts/inventory.gd").new()
 	var left: int = inv.add(Blocks.DIRT, 70)
@@ -504,6 +632,23 @@ func _ci(x: int, y: int, z: int) -> int:
 
 func _pi(x: int, y: int, z: int) -> int:
 	return (((x + Mesher.PAD) + (z + Mesher.PAD) * Mesher.PW) << 7) + y
+
+
+## A direction in which the ground stays level for 3 blocks, for close-range tests.
+func _flat_direction() -> Vector3:
+	var p: Node3D = main.player
+	var w: Node3D = main.world
+	var y := floori(p.position.y)
+	for i in 8:
+		var d := Vector3.FORWARD.rotated(Vector3.UP, i * PI / 4.0)
+		var level := true
+		for step in range(1, 4):
+			var x := floori(p.position.x + d.x * step)
+			var z := floori(p.position.z + d.z * step)
+			level = level and w.is_solid(x, y - 1, z) and not w.is_solid(x, y, z) and not w.is_solid(x, y + 1, z)
+		if level:
+			return d
+	return Vector3.FORWARD
 
 
 ## Points the camera at a world position.

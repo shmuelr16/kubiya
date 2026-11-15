@@ -1,14 +1,18 @@
 extends Node3D
-## Entry point. Builds sky, world, player, interaction, audio and HUD in code.
+## Entry point. Builds the world, player, creatures, audio and screens in code,
+## loads and saves the game, and runs the title and pause menus.
 ##
-## Test arguments, passed after `--`:
+## Test arguments, passed after `--`. Any of the first six turns saving off.
 ##   --shot=PATH        wait for the world to load, measure FPS, save a PNG, quit
 ##   --selftest=PATH    drive the game with simulated touches, print PASS/FAIL, quit
+##   --titleshot=PATH   save a PNG of the title screen, quit
+##   --e2e=write|read   with --savedir: change the world and save, or load and report
 ##   --pos=X,Y,Z        hold the camera at a fixed position (no physics)
+##   --cave             put the fixed camera inside the nearest cave
+##   --savedir=DIR      use another save folder (res:// or user:// path)
 ##   --look=PITCH,YAW   camera angles in degrees
 ##   --dist=N           view distance in chunks
 ##   --fly=SPEED        with --pos: move the camera along +X (blocks per second)
-##   --cave             put the fixed camera inside the nearest cave
 ##   --nothreads        force the single-threaded loader (as on web)
 ##   --time=T           freeze the clock: 0 sunrise, 0.25 noon, 0.5 sunset, 0.75 midnight
 ##   --nomobs           no natural creature spawning
@@ -27,10 +31,20 @@ const Drops := preload("res://scripts/drops.gd")
 const DayNight := preload("res://scripts/daynight.gd")
 const Mobs := preload("res://scripts/mobs.gd")
 const StatusHUD := preload("res://scripts/status_hud.gd")
+const Furnaces := preload("res://scripts/furnaces.gd")
+const Menu := preload("res://scripts/menu.gd")
+const SaveGame := preload("res://scripts/savegame.gd")
 const SelfTest := preload("res://scripts/selftest.gd")
 
-const HELP := "Click: capture mouse  |  WASD: move  |  Space: jump / swim  |  Shift: run  |  Esc: release\n" \
-		+ "Hold left: mine / hit  |  Right: place / use / eat  |  1-9 / wheel: slot  |  E: inventory  |  M: music"
+const TEST_SEED := 1337
+const AUTOSAVE_PERIOD := 60.0
+const HELP := "WASD: move  |  Space: jump / swim  |  Shift: run  |  E: inventory  |  Esc: menu\n" \
+		+ "Hold left: mine / hit  |  Right: place / use / eat  |  1-9 / wheel: slot  |  M: music"
+
+## Set before reloading the scene: start a fresh world, and skip the title screen.
+static var boot_new_world := false
+static var boot_skip_title := false
+static var _daylight_registered := false
 
 var world: Node3D
 var player: Node3D
@@ -42,7 +56,9 @@ var inventory_ui: Control
 var drops: Node3D
 var daynight: Node3D
 var mobs: Node3D
+var furnaces: Node
 var status: Control
+var menu: Control
 var environment: Environment
 var touch: Control
 var hud: Label
@@ -51,7 +67,15 @@ var underwater: ColorRect
 var fixed_camera := false
 var spawn_xz := Vector2i.ZERO
 var fly_speed := 0.0
+## False while the title screen is up: the world loads but the game waits.
+var started := false
+var save_enabled := true
+var save_dir := SaveGame.DIR
+var saves_written := 0
+
 var _was_captured := false
+var _loaded_player := false
+var _autosave := AUTOSAVE_PERIOD
 
 
 func _ready() -> void:
@@ -59,9 +83,29 @@ func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		var kv := arg.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else ""
+	var test_mode := false
+	for key: String in ["shot", "selftest", "titleshot", "pos", "cave", "e2e"]:
+		test_mode = test_mode or args.has(key)
+	if args.has("savedir"):
+		save_dir = args["savedir"]
+	save_enabled = not test_mode or args.has("savedir")
+	get_tree().auto_accept_quit = false
 
 	# Shaders read this global value, so it must exist before any of them compiles.
-	RenderingServer.global_shader_parameter_add("daylight", RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 1.0)
+	# It outlives a scene reload, so it is registered once per run.
+	if not _daylight_registered:
+		_daylight_registered = true
+		RenderingServer.global_shader_parameter_add("daylight", RenderingServer.GLOBAL_VAR_TYPE_FLOAT, 1.0)
+
+	# Saved game, or a new world.
+	var saved := {}
+	if save_enabled:
+		if boot_new_world:
+			SaveGame.erase(save_dir)
+		else:
+			saved = SaveGame.read(save_dir)
+	boot_new_world = false
+	var meta: Dictionary = saved.get("meta", {})
 
 	audio = GameAudio.new()
 	audio.name = "Audio"
@@ -70,7 +114,14 @@ func _ready() -> void:
 
 	world = World.new()
 	world.name = "World"
-	if OS.has_feature("mobile") or OS.has_feature("web"):
+	if not meta.is_empty():
+		world.world_seed = int(meta["seed"])
+		world.load_edits(saved["modified"])
+	elif test_mode:
+		world.world_seed = TEST_SEED
+	else:
+		world.world_seed = randi() & 0x7fffffff
+	if OS.has_feature("web"):
 		world.view_dist = 5
 	if args.has("dist"):
 		world.view_dist = int(args["dist"])
@@ -94,6 +145,11 @@ func _ready() -> void:
 	drops.audio = audio
 	drops.atlas = world.atlas
 	add_child(drops)
+
+	furnaces = Furnaces.new()
+	furnaces.name = "Furnaces"
+	furnaces.drops = drops
+	add_child(furnaces)
 
 	_build_sky()
 	if args.has("time"):
@@ -123,7 +179,9 @@ func _ready() -> void:
 	interaction.inventory = inventory
 	interaction.drops = drops
 	interaction.mobs = mobs
+	interaction.furnaces = furnaces
 	interaction.workbench_used.connect(open_inventory.bind(3))
+	interaction.furnace_used.connect(open_furnace)
 	add_child(interaction)
 
 	if args.has("pos"):
@@ -134,6 +192,8 @@ func _ready() -> void:
 	elif args.has("cave"):
 		player.position = _find_cave()
 		fixed_camera = true
+	elif not meta.is_empty():
+		_apply_save(meta)
 	else:
 		spawn_xz = _find_land()
 		player.position = Vector3(spawn_xz.x + 0.5, 100.0, spawn_xz.y + 0.5)
@@ -144,13 +204,34 @@ func _ready() -> void:
 	world.focus = player.position
 
 	if args.has("selftest"):
+		started = true
 		var test := SelfTest.new()
 		test.main = self
 		test.path = args["selftest"]
 		add_child(test)
 	elif args.has("shot"):
+		started = true
 		set_input_enabled(false)
 		_screenshot(args["shot"])
+	elif args.has("e2e"):
+		started = true
+		set_input_enabled(false)
+		mobs.auto_spawn = false
+		_e2e(args["e2e"])
+	elif args.has("titleshot"):
+		_show_title(not meta.is_empty())
+		_title_shot(args["titleshot"])
+	elif test_mode or boot_skip_title:
+		boot_skip_title = false
+		started = true
+	else:
+		_show_title(not meta.is_empty())
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		save_game()
+		get_tree().quit()
 
 
 func set_input_enabled(on: bool) -> void:
@@ -159,14 +240,146 @@ func set_input_enabled(on: bool) -> void:
 	inventory_ui.input_enabled = on
 
 
-func open_inventory(grid: int) -> void:
-	if inventory_ui.visible or player.frozen:
+# --- Title and pause ---
+
+func _show_title(has_save: bool) -> void:
+	started = false
+	daynight.paused = true
+	touch.enabled = false
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	menu.show_title(has_save)
+
+
+func _on_play() -> void:
+	menu.hide_menu()
+	started = true
+	daynight.paused = false
+	touch.enabled = true
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func _on_new_world() -> void:
+	boot_new_world = true
+	boot_skip_title = true
+	get_tree().paused = false
+	get_tree().reload_current_scene()
+
+
+func pause_game() -> void:
+	if not started or menu.mode != Menu.HIDDEN or inventory_ui.visible:
 		return
+	_was_captured = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	menu.music_on = audio.music_on
+	menu.show_pause()
+	get_tree().paused = true
+
+
+func resume_game() -> void:
+	get_tree().paused = false
+	menu.hide_menu()
+	if _was_captured:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func _on_music() -> void:
+	audio.toggle_music()
+	menu.music_on = audio.music_on
+
+
+func _on_to_title() -> void:
+	save_game()
+	boot_new_world = false
+	boot_skip_title = false
+	get_tree().paused = false
+	get_tree().reload_current_scene()
+
+
+func _on_quit() -> void:
+	save_game()
+	get_tree().quit()
+
+
+# --- Save and load ---
+
+## Writes the game to the save folder. Returns false when saving is off or fails.
+func save_game() -> bool:
+	if not save_enabled or not started or player.frozen:
+		return false
+	inventory_ui.close()
+	var p := player.position
+	var meta := {
+		"seed": world.world_seed,
+		"time": daynight.time,
+		"music": audio.music_on,
+		"selected": hotbar.selected,
+		"player": {
+			"pos": [p.x, p.y, p.z],
+			"yaw": player.rotation.y,
+			"pitch": player.cam.rotation.x,
+			"health": player.health,
+			"hunger": player.hunger,
+			"deaths": player.deaths,
+			"spawn": [player.spawn_point.x, player.spawn_point.y, player.spawn_point.z],
+		},
+		"inventory": {
+			"ids": Array(inventory.ids), "counts": Array(inventory.counts), "durs": Array(inventory.durs),
+		},
+		"furnaces": furnaces.to_save(),
+	}
+	var ok := SaveGame.write(save_dir, meta, world.edits())
+	if ok:
+		saves_written += 1
+	return ok
+
+
+func _apply_save(meta: Dictionary) -> void:
+	var pl: Dictionary = meta["player"]
+	var pos: Array = pl["pos"]
+	var spawn: Array = pl["spawn"]
+	player.position = Vector3(pos[0], pos[1], pos[2])
+	player.rotation.y = pl["yaw"]
+	player.cam.rotation.x = pl["pitch"]
+	player.health = pl["health"]
+	player.hunger = pl["hunger"]
+	player.deaths = int(pl["deaths"])
+	player.spawn_point = Vector3(spawn[0], spawn[1], spawn[2])
+	_loaded_player = true
+	var inv: Dictionary = meta["inventory"]
+	for i in inventory.SIZE:
+		inventory.set_slot(i, int(inv["ids"][i]), int(inv["counts"][i]), int(inv["durs"][i]))
+	hotbar.select(int(meta.get("selected", 0)))
+	daynight.set_time(float(meta["time"]))
+	furnaces.from_save(meta.get("furnaces", []))
+	if not bool(meta.get("music", true)):
+		audio.toggle_music()
+
+
+# --- Screens ---
+
+func open_inventory(grid: int) -> void:
+	if not _can_open():
+		return
+	_before_screen()
+	inventory_ui.open(grid)
+
+
+func open_furnace(cell: Vector3i) -> void:
+	if not _can_open():
+		return
+	_before_screen()
+	inventory_ui.open_furnace(furnaces.state_at(cell))
+
+
+func _can_open() -> bool:
+	return started and not inventory_ui.visible and not player.frozen and menu.mode == Menu.HIDDEN
+
+
+func _before_screen() -> void:
 	_was_captured = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	player.ui_open = true
 	touch.enabled = false
-	inventory_ui.open(grid)
 
 
 func _on_inventory_closed() -> void:
@@ -177,29 +390,39 @@ func _on_inventory_closed() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not player.input_enabled:
+	if not player.input_enabled or not started:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.physical_keycode == KEY_M:
-			audio.toggle_music()
-		elif event.physical_keycode == KEY_E:
-			open_inventory(2)
+		match event.physical_keycode:
+			KEY_M:
+				audio.toggle_music()
+			KEY_E:
+				open_inventory(2)
+			KEY_ESCAPE:
+				pause_game()
 
 
 func _process(delta: float) -> void:
 	player.position.x += fly_speed * delta
 	world.focus = player.position
-	if player.frozen and not fixed_camera:
+	if player.frozen and not fixed_camera and started:
 		_try_spawn()
+	if save_enabled and started:
+		_autosave -= delta
+		if _autosave <= 0.0:
+			_autosave = AUTOSAVE_PERIOD
+			save_game()
 	var p := player.position
 	var eye: Vector3 = player.cam.global_position
 	underwater.visible = world.get_block(floori(eye.x), floori(eye.y), floori(eye.z)) == Blocks.WATER
-	help.visible = not touch.active
+	help.visible = not touch.active and started
+	hotbar.visible = started
+	status.visible = started
 	if touch.bag_pressed:
 		touch.bag_pressed = false
 		open_inventory(2)
 	var hours := fposmod(daynight.time * 24.0 + 6.0, 24.0)
-	hud.text = "Kubiya 0.5  |  %d FPS  |  %d chunks  |  %dk quads  |  %d, %d, %d  |  %02d:%02d" % [
+	hud.text = "Kubiya 0.6  |  %d FPS  |  %d chunks  |  %dk quads  |  %d, %d, %d  |  %02d:%02d" % [
 		Engine.get_frames_per_second(), world.chunks.size(), world.total_quads / 1000.0,
 		floori(p.x), floori(p.y), floori(p.z), int(hours), int(fposmod(hours, 1.0) * 60.0)]
 
@@ -223,18 +446,42 @@ func _find_cave() -> Vector3:
 	return Vector3(0.5, 30.0, 0.5)
 
 
-## Drops the player on top of the spawn column once its chunk has data.
+## Releases the player once the chunk under them has data.
+## A new player lands on open ground near the spawn column, not on a tree.
 func _try_spawn() -> void:
-	var x := spawn_xz.x
-	var z := spawn_xz.y
+	var x := floori(player.position.x)
+	var z := floori(player.position.z)
 	if world.get_block(x, 0, z) == -1:
 		return
+	if _loaded_player:
+		player.frozen = false
+		return
+	var best := Vector3i(x, _top_solid(x, z), z)
+	for r in range(0, 9):
+		var found := false
+		for dz in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if found or maxi(absi(dx), absi(dz)) != r:
+					continue
+				if world.get_block(x + dx, 0, z + dz) == -1:
+					continue
+				var y := _top_solid(x + dx, z + dz)
+				var ground: int = world.get_block(x + dx, y, z + dz)
+				if ground == Blocks.GRASS or ground == Blocks.SAND or ground == Blocks.DIRT:
+					best = Vector3i(x + dx, y, z + dz)
+					found = true
+		if found:
+			break
+	player.position = Vector3(best.x + 0.5, best.y + 1.0, best.z + 0.5)
+	player.spawn_point = player.position
+	player.frozen = false
+
+
+func _top_solid(x: int, z: int) -> int:
 	var y := Terrain.SY - 1
 	while y > 0 and not world.is_solid(x, y, z):
 		y -= 1
-	player.position.y = y + 1.0
-	player.spawn_point = player.position
-	player.frozen = false
+	return y
 
 
 func _build_sky() -> void:
@@ -310,6 +557,15 @@ func _build_hud() -> void:
 	inventory_ui.closed.connect(_on_inventory_closed)
 	layer.add_child(inventory_ui)
 
+	menu = Menu.new()
+	menu.play_pressed.connect(_on_play)
+	menu.new_world_pressed.connect(_on_new_world)
+	menu.resume_pressed.connect(resume_game)
+	menu.music_pressed.connect(_on_music)
+	menu.title_pressed.connect(_on_to_title)
+	menu.quit_pressed.connect(_on_quit)
+	layer.add_child(menu)
+
 
 func _screenshot(path: String) -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
@@ -330,6 +586,44 @@ func _screenshot(path: String) -> void:
 	print("SHOT err=%d threads=%s dist=%d chunks=%d quads=%d | load %d ms, worst frame %.1f ms | run fps avg %.0f, worst frame %.1f ms | pos=%s floor=%s" % [
 		err, world.use_threads, world.view_dist, world.chunks.size(), world.total_quads,
 		load_ms, load_stats[1], run_stats[0], run_stats[1], player.position, player.on_floor])
+	get_tree().quit()
+
+
+func _title_shot(path: String) -> void:
+	var t0 := Time.get_ticks_msec()
+	while not world.is_idle() and Time.get_ticks_msec() - t0 < 60000:
+		await get_tree().process_frame
+	for i in 5:
+		await get_tree().process_frame
+	var err := await save_png(path)
+	print("TITLESHOT err=%d menu=%d started=%s" % [err, menu.mode, started])
+	get_tree().quit()
+
+
+## Two-run save test. "write" changes the world and saves; "read" is run in a
+## new process and reports what it loaded. Both print one comparable line.
+func _e2e(phase: String) -> void:
+	var t0 := Time.get_ticks_msec()
+	while (player.frozen or not world.is_idle()) and Time.get_ticks_msec() - t0 < 60000:
+		await get_tree().process_frame
+	if phase == "write":
+		var c := Vector3i(floori(player.position.x) + 2, floori(player.position.y) + 1, floori(player.position.z))
+		world.set_block(c.x, c.y, c.z, Blocks.BRICKS)
+		world.set_block(c.x, c.y + 1, c.z, Blocks.TORCH)
+		inventory.add(Blocks.BRICKS, 7)
+		daynight.set_time(0.6)
+		player.health = 13.0
+		furnaces.state_at(c)["in_n"] = 3
+		furnaces.state_at(c)["in_id"] = Blocks.IRON
+		for i in 30:
+			await get_tree().process_frame
+		print("E2E saved=%s" % save_game())
+	var q := Vector3i(floori(player.position.x) + 2, floori(player.position.y) + 1, floori(player.position.z))
+	print("E2E %s seed=%d pos=%s block=%d torch=%d bricks=%d time=%.2f health=%.0f furnace_in=%d edits=%d torches=%d" % [
+		phase, world.world_seed, player.position.snappedf(0.01), world.get_block(q.x, q.y, q.z),
+		world.get_block(q.x, q.y + 1, q.z), inventory.count_of(Blocks.BRICKS), daynight.time, player.health,
+		furnaces.state_at(q)["in_n"], world.edits().size(), world._torches.size()])
+	save_enabled = false
 	get_tree().quit()
 
 

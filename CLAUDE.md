@@ -1,14 +1,17 @@
 # Kubiya
 
 Original 3D block sandbox game. Godot 4.7, GDScript, GL Compatibility renderer.
-Targets: macOS, Windows, Android, iOS, web. Public repository, MIT license.
+Targets: computers only: macOS, Windows, web. No Android or iOS builds (dropped by
+the owner on 2026-11-15). Public repository, MIT license.
 
 ## Hard rules
 
 - No Mojang or Minecraft assets, names, code, sounds or music. Everything is original.
 - Textures and audio are generated in code or made by us. Do not add third-party art.
 - No Electron. Godot exports native apps.
-- Use the GL Compatibility renderer only, so that web and old phones keep working.
+- Use the GL Compatibility renderer only, so that web and old computers keep working.
+- Touch controls stay in the code: touch-screen computers use them, and the
+  automated play test drives the game through them.
 - Scripts reference each other with `preload`, not `class_name`, so that a clean
   clone runs from the command line without an editor import.
 
@@ -18,7 +21,10 @@ Targets: macOS, Windows, Android, iOS, web. Public repository, MIT license.
 |------|---------|
 | `project.godot` | Engine configuration |
 | `scenes/main.tscn` | The only scene. One node with `main.gd` |
-| `scripts/main.gd` | Entry point. Builds sky, fog, world, player, HUD. Test arguments |
+| `scripts/main.gd` | Entry point. Builds everything, save and load, title and pause, test arguments |
+| `scripts/savegame.gd` | Reads and writes the save folder |
+| `scripts/furnaces.gd` | State and ticking of every furnace |
+| `scripts/menu.gd` | Title screen and pause menu |
 | `scripts/blocks.gd` | Block ids, face-to-tile table, procedural texture atlas |
 | `scripts/terrain.gd` | Terrain generator: height, caves, ores, trees. Thread-safe |
 | `scripts/mesher.gd` | Chunk to render arrays, hidden faces removed. Thread-safe |
@@ -77,7 +83,8 @@ The scene tree is built in code. Keep `.tscn` files minimal.
   tiles in `make_atlas()`. The atlas is 8 x 8 tiles: 0-31 block faces, 32+ item icons.
 - A torch is a block with its own shape in `mesher.gd`. It is not solid, does
   not hide neighbour faces, and emits block light 13.
-- A furnace can be crafted and placed. It does not smelt yet.
+- A furnace smelts while its screen is closed. `Items.smelt()` and
+  `Items.fuel_time()` are the tables. Its state lives in `furnaces.gd`, keyed by cell.
 
 ## Light, day and night
 
@@ -117,11 +124,31 @@ The scene tree is built in code. Keep `.tscn` files minimal.
 - Attacks go through `mobs.pick()` from `interaction.gd`: a creature closer than
   the targeted block takes the hit and the block is not mined.
 
+## Saving and menus
+
+- One world, in `user://world`: `meta.json` (seed, clock, player, inventory,
+  furnaces) and `chunks.bin` (only edited chunks, zstd). Terrain is rebuilt from
+  the seed. Creatures and lying items are not saved.
+- Saved every 60 s, on window close, and from the pause menu. Files are written
+  under a temporary name and renamed.
+- New state that must survive a restart goes into `save_game()` and
+  `_apply_save()` in `main.gd`, with a check in the save section of `selftest.gd`.
+  Change `SaveGame.VERSION` when the format changes: older saves are then ignored.
+- Any test argument turns saving off, unless `--savedir` is given.
+  Tests use the fixed seed 1337; a real new world gets a random seed.
+- Title screen: the world loads behind it, the player stays frozen and
+  `main.started` is false. "New world" sets static flags and reloads the scene.
+- Pause uses `get_tree().paused`; `menu.gd` runs in `PROCESS_MODE_ALWAYS`.
+- UI text is English only: the built-in font has no Hebrew glyphs.
+
 ## Items and crafting
 
 - Item ids below 100 are blocks, with the same id. Ids from 100 are `items.gd` items.
   Add an item: a constant, an icon pattern painted at tile `ICON_BASE + id - 100`,
   and a recipe in `crafting.gd`.
+- Tool ids: wood 102-105, stone 106-109, iron 114-117 (not contiguous with the
+  others; `tool_type()` and `tool_tier()` handle it). Order in each tier: pickaxe,
+  axe, shovel, sword.
 - Do not name a static function `is_tool`: `Script.is_tool()` shadows it when
   called through a preloaded script constant.
 - `Items.mine_time()` and `Items.drop_for()` hold all tool rules: matching tool
@@ -157,6 +184,9 @@ G=/Applications/Godot.app/Contents/MacOS/Godot
 $G --headless --path . --import          # after a clean clone or new assets
 $G --path .                              # play
 $G --path . -- --selftest=/tmp/kubiya                                   # play test, PASS/FAIL lines
+$G --path . -- --e2e=write --savedir=user://e2e_world                   # save test, run 1
+$G --path . -- --e2e=read --savedir=user://e2e_world                    # save test, run 2: same values
+$G --path . -- --titleshot=/tmp/title.png                               # title screen
 $G --path . -- --shot=/tmp/a.png                                        # spawn and stand
 $G --path . -- --shot=/tmp/f.png --pos=0,100,0 --look=-25,-90 --fly=20  # streaming
 $G --path . -- --shot=/tmp/c.png --cave --look=0,-90                    # inside a cave
@@ -169,10 +199,12 @@ to load, measures 5 seconds, saves a PNG, prints one `SHOT` line and quits.
 the light rules on hand-built chunks, and then plays the game with simulated
 touches: joystick, look, jump, mining, item pickup, placing, both crafting screens,
 tools, torch, swimming, music, day and night, fall damage, hunger, eating, death,
-combat, creature AI and spawning. It must end with `SELFTEST ALL PASS`. It freezes
+combat, creature AI and spawning, the furnace screen, pause, and a save round trip.
+It must end with `SELFTEST ALL PASS`. It freezes
 the clock at noon and turns natural spawning off except where it tests them.
 It writes `PATH_crack.png`, `PATH_inventory.png`, `PATH_workbench.png`,
-`PATH_torch.png`, `PATH_night.png`, `PATH_torchlight.png`, `PATH_sunrise.png` and `PATH_creatures.png`.
+`PATH_torch.png`, `PATH_night.png`, `PATH_torchlight.png`, `PATH_sunrise.png`,
+`PATH_creatures.png`, `PATH_furnace.png` and `PATH_pause.png`.
 Add a check there for every new mechanic.
 
 Check after every change: no script errors, `SELFTEST ALL PASS`, `floor=true` in
@@ -188,8 +220,9 @@ No phone has been measured yet.
 
 ## Build
 
-Not set up yet. Stage 6 adds `export_presets.cfg`, export templates and a release
-workflow. The macOS build must ship as a `.app` inside a `.dmg`.
+Not set up yet. Stage 7 adds `export_presets.cfg`, export templates and a release
+workflow for macOS, Windows and web. The macOS build must ship as a `.app` inside
+a `.dmg`. Remove the `e2e_world` folder under the Godot user data after save tests.
 Update this section when that lands.
 
 ## Update flow
@@ -197,3 +230,7 @@ Update this section when that lands.
 Work in stages. The roadmap table is in `README.md`.
 At the end of each stage: run and verify, update both README language sections and
 this file, commit, push, then report what was done.
+
+`git push` through the macOS keychain helper has hung on this Mac. The repository
+is configured to take credentials from `gh` instead. If a push hangs, check
+`git config --local --get-all credential.helper`.

@@ -44,8 +44,8 @@ const HARDNESS: PackedFloat32Array = [
 ## Tool that mines the block faster: 0 none, 1 pickaxe, 2 axe, 3 shovel.
 const TOOL: PackedInt32Array = [0, 3, 3, 1, 3, 2, 0, 0, 1, 1, 1, 1, 0, 2, 1, 2, 0, 1]
 
-## Lowest pickaxe tier that makes the block drop an item: 0 hand, 1 wood, 2 stone.
-const MIN_TIER: PackedInt32Array = [0, 0, 0, 1, 0, 0, 0, 0, 1, 2, 2, 2, 0, 0, 1, 0, 0, 1]
+## Lowest pickaxe tier that makes the block drop an item: 0 hand, 1 wood, 2 stone, 3 iron.
+const MIN_TIER: PackedInt32Array = [0, 0, 0, 1, 0, 0, 0, 0, 1, 2, 2, 3, 0, 0, 1, 0, 0, 1]
 
 ## 1 when the block stops movement.
 const SOLID: PackedByteArray = [0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1]
@@ -105,6 +105,10 @@ const ICON_MEAT := [
 const ICON_FRUIT := [
 	"", "", ".......g", "......gg", ".....ffff", "....ffffff", "...ffFFffff", "...ffFfffff",
 	"...ffffffff", "...ffffffff", "....ffffff", ".....ffff",
+]
+const ICON_INGOT := [
+	"", "", "", "", "", ".....iiiiiiii", "....iIIIIIIIi", "...iIIIIIIIIi", "..iiiiiiiiiii",
+	"..iiiiiiiiii", "..iiiiiiiii",
 ]
 const ICON_SWORD := [
 	"", ".............hh", "............hhh", "...........hhh", "..........hhh",
@@ -226,6 +230,15 @@ static func make_atlas() -> ImageTexture:
 		"m": Color(0.76, 0.30, 0.26), "M": Color(0.93, 0.52, 0.45), "b": Color(0.93, 0.91, 0.83)})
 	_icon(img, ICON_BASE + 11, ICON_FRUIT, {
 		"f": Color(0.80, 0.22, 0.48), "F": Color(0.97, 0.60, 0.76), "g": Color(0.30, 0.62, 0.25)})
+
+	_icon(img, ICON_BASE + 12, ICON_INGOT, {"i": Color(0.70, 0.71, 0.76), "I": Color(0.93, 0.94, 0.97)})
+	_icon(img, ICON_BASE + 13, ICON_MEAT, {
+		"m": Color(0.55, 0.33, 0.18), "M": Color(0.74, 0.50, 0.28), "b": Color(0.93, 0.91, 0.83)})
+	var iron := {"s": C_WOOD, "h": Color(0.86, 0.87, 0.92)}
+	_icon(img, ICON_BASE + 14, ICON_PICK, iron)
+	_icon(img, ICON_BASE + 15, ICON_AXE, iron)
+	_icon(img, ICON_BASE + 16, ICON_SHOVEL, iron)
+	_icon(img, ICON_BASE + 17, ICON_SWORD, iron)
 
 	return ImageTexture.create_from_image(img)
 
