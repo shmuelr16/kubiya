@@ -220,10 +220,26 @@ No phone has been measured yet.
 
 ## Build
 
-Not set up yet. Stage 7 adds `export_presets.cfg`, export templates and a release
-workflow for macOS, Windows and web. The macOS build must ship as a `.app` inside
-a `.dmg`. Remove the `e2e_world` folder under the Godot user data after save tests.
-Update this section when that lands.
+macOS only so far. Windows and web presets are not added yet.
+
+```sh
+./tools/build_mac.sh        # writes build/Kubiya-<version>-mac.dmg
+```
+
+- The version comes from `config/version` in `project.godot`. Keep the two version
+  fields in `export_presets.cfg` and the HUD text in `main.gd` in step with it.
+- The dmg holds `Kubiya.app` and a shortcut to Applications. The app is a universal
+  binary (Intel and Apple Silicon), signed ad-hoc, not notarized: a downloaded copy
+  needs "Open Anyway" once. Notarizing needs a paid Apple Developer account.
+- Export template: `~/Library/Application Support/Godot/export_templates/4.7.2.stable/macos.zip`.
+  Only that file was fetched from the official template archive, to save disk space.
+  Windows and web builds need more files from the same archive.
+- Verify a build: copy the app out of the dmg and run the play test inside it.
+  `Kubiya.app/Contents/MacOS/Kubiya -- --selftest=/tmp/app` must print `SELFTEST ALL PASS`.
+- Release: `gh release create v<version> build/Kubiya-<version>-mac.dmg`.
+  `build/` is not committed.
+- The download site is a plain project site, not part of the owner's "Ma shoved" brand.
+- Remove the `e2e_world` folder under the Godot user data after save tests.
 
 ## Update flow
 

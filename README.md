@@ -33,7 +33,8 @@ pause menus; sound and music generated in code.
 | 4 | Item drops, inventory, 2x2 and 3x3 crafting, tools, torch, workbench | Done |
 | 5 | Day and night, sky and torch light, health, hunger, creatures | Done |
 | 6 | Save and load, furnace smelting, iron tools, title and pause menus | Done |
-| 7 | Builds: macOS `.dmg`, Windows, web | Planned |
+| 7 | macOS app in a `.dmg`, published on GitHub Releases | Done |
+| 7b | Windows and web builds | Planned |
 | 8 | Download site on GitHub Pages with the browser version | Planned |
 
 ## Controls
@@ -96,9 +97,21 @@ iron pickaxe. The right tool mines faster. Tools wear out.
 Use a placed furnace to smelt: iron ore into iron ingots, meat into cooked meat,
 logs into coal. Fuel: coal, logs, planks, sticks.
 
-## Run from source
+## Install on a Mac
 
-Ready-made downloads arrive in stage 6. Until then:
+1. Download `Kubiya-<version>-mac.dmg` from the
+   [latest release](https://github.com/shmuelr16/kubiya/releases/latest).
+2. Open the file and drag Kubiya onto the Applications folder.
+3. Open Kubiya from Applications.
+
+The app runs on Intel and Apple Silicon Macs, macOS 11 or newer (10.13 on Intel).
+It is not notarized by Apple, so the first launch is blocked. Open
+System Settings > Privacy & Security, scroll down, and press "Open Anyway" next to
+Kubiya. This is needed once.
+
+Windows and browser versions are not built yet.
+
+## Run from source
 
 1. Install [Godot 4.7](https://godotengine.org/download) or newer.
 2. Clone this repository.
@@ -132,7 +145,8 @@ MIT. See [LICENSE](LICENSE).
 | 4 | פריטים נופלים, מלאי, יצירה 2x2 ו־3x3, כלים, לפיד, שולחן עבודה | בוצע |
 | 5 | יום ולילה, אור שמיים ולפידים, בריאות, רעב, יצורים | בוצע |
 | 6 | שמירה וטעינה, התכה בתנור, כלי ברזל, מסך פתיחה ותפריט השהיה | בוצע |
-| 7 | גרסאות: מק (`.dmg`), ווינדוס, דפדפן | מתוכנן |
+| 7 | אפליקציית מק בתוך `.dmg`, מפורסמת ב־GitHub Releases | בוצע |
+| 7b | גרסאות ווינדוס ודפדפן | מתוכנן |
 | 8 | אתר הורדה ב־GitHub Pages עם גרסת הדפדפן | מתוכנן |
 
 ### מקשים
@@ -195,9 +209,21 @@ MIT. See [LICENSE](LICENSE).
 תנור מוצב מתיך: עפרת ברזל למטילי ברזל, בשר לבשר מבושל, בולי עץ לפחם.
 דלק: פחם, בולי עץ, קרשים, מקלות.
 
-### הרצה מהקוד
+### התקנה במק
 
-הורדות מוכנות יגיעו בשלב 6. עד אז:
+1. מורידים את `Kubiya-<version>-mac.dmg` מתוך
+   [הגרסה האחרונה](https://github.com/shmuelr16/kubiya/releases/latest).
+2. פותחים את הקובץ וגוררים את Kubiya לתיקיית Applications.
+3. פותחים את Kubiya מתוך Applications.
+
+האפליקציה רצה על מק אינטל ועל Apple Silicon, macOS 11 ומעלה (10.13 באינטל).
+היא לא מאושרת (notarized) על ידי Apple, ולכן הפתיחה הראשונה נחסמת. פותחים
+הגדרות המערכת > פרטיות ואבטחה, גוללים למטה ולוחצים "Open Anyway" ליד Kubiya.
+צריך לעשות זאת פעם אחת.
+
+גרסאות ווינדוס ודפדפן עדיין לא נבנו.
+
+### הרצה מהקוד
 
 1. מתקינים [Godot 4.7](https://godotengine.org/download) ומעלה.
 2. משכפלים את הריפו.
