@@ -1,6 +1,7 @@
 # Kubiya · קובייה
 
 ![Kubiya screenshot](docs/screenshot.png)
+![Mining and building with touch controls](docs/screenshot-touch.png)
 
 **English** | [עברית](#עברית)
 
@@ -12,16 +13,17 @@ The name, textures, sounds and music are original. Textures are generated in cod
 
 ## Status
 
-Early development. Stages 1 and 2 are done: an endless generated world with hills,
-sea, caves, trees and ores, streamed in chunks around the player.
+Early development. Stages 1 to 3 are done: an endless generated world with hills,
+sea, caves, trees and ores; mining and building; keyboard, mouse and touch controls;
+sound effects and background music generated in code.
 
 | Stage | Content | State |
 |-------|---------|-------|
 | 1 | Repository, project skeleton, terrain, walking | Done |
 | 2 | Endless world: 16x16x128 chunks, hills, water, caves, trees, ores, streaming | Done |
-| 3 | Mining and building, hotbar, inventory, crafting, save and load | Planned |
-| 4 | Day and night, monsters, health | Planned |
-| 5 | Original sounds and music, touch controls, menus | Planned |
+| 3 | First-person player, mining, building, hotbar, touch controls, sounds, music | Done |
+| 4 | Inventory, crafting, save and load | Planned |
+| 5 | Day and night, lighting, monsters, health, menus | Planned |
 | 6 | Builds: macOS `.dmg`, Windows, Android APK, iOS, web | Planned |
 | 7 | Download site on GitHub Pages with the browser version | Planned |
 
@@ -33,7 +35,14 @@ sea, caves, trees and ores, streamed in chunks around the player.
 | Look | Mouse (click the window first) |
 | Jump / swim up | Space |
 | Run | Shift |
+| Mine | Hold left mouse button |
+| Place block | Right mouse button |
+| Choose block | 1 to 9, or mouse wheel |
+| Music on / off | M |
 | Release mouse | Esc |
+
+Touch: joystick on the left, buttons for jump, mine (hold) and place on the right,
+drag anywhere else to look, tap a hotbar slot to choose a block.
 
 ## Run from source
 
@@ -61,15 +70,15 @@ MIT. See [LICENSE](LICENSE).
 
 ### מצב
 
-פיתוח מוקדם. שלבים 1 ו־2 הושלמו: עולם אינסופי עם גבעות, ים, מערות, עצים ועפרות, שנטען בצ'אנקים סביב השחקן.
+פיתוח מוקדם. שלבים 1 עד 3 הושלמו: עולם אינסופי עם גבעות, ים, מערות, עצים ועפרות; כרייה ובנייה; שליטה במקלדת, עכבר ומגע; צלילים ומוזיקת רקע שנוצרים בקוד.
 
 | שלב | תוכן | מצב |
 |-----|------|-----|
 | 1 | ריפו, שלד הפרויקט, עולם, הליכה | בוצע |
 | 2 | עולם אינסופי: צ'אנקים 16x16x128, גבעות, מים, מערות, עצים, עפרות, טעינה דינמית | בוצע |
-| 3 | כרייה ובנייה, סרגל חפצים, מלאי, יצירת חפצים, שמירה וטעינה | מתוכנן |
-| 4 | יום ולילה, מפלצות, חיים | מתוכנן |
-| 5 | צלילים ומוזיקה מקוריים, שליטה במגע, תפריטים | מתוכנן |
+| 3 | שחקן בגוף ראשון, כרייה, בנייה, סרגל חפצים, שליטה במגע, צלילים, מוזיקה | בוצע |
+| 4 | מלאי, יצירת חפצים, שמירה וטעינה | מתוכנן |
+| 5 | יום ולילה, תאורה, מפלצות, חיים, תפריטים | מתוכנן |
 | 6 | גרסאות: מק (`.dmg`), ווינדוס, אנדרואיד (APK), אייפון, דפדפן | מתוכנן |
 | 7 | אתר הורדה ב־GitHub Pages עם גרסת הדפדפן | מתוכנן |
 
@@ -81,7 +90,14 @@ MIT. See [LICENSE](LICENSE).
 | מבט | עכבר (קודם לוחצים על החלון) |
 | קפיצה / שחייה למעלה | רווח |
 | ריצה | Shift |
+| כרייה | לחיצה ארוכה על כפתור שמאלי |
+| הצבת בלוק | כפתור ימני |
+| בחירת בלוק | 1 עד 9, או גלגלת |
+| מוזיקה | M |
 | שחרור העכבר | Esc |
+
+מגע: ג'ויסטיק משמאל, כפתורי קפיצה, כרייה (לחיצה ארוכה) והצבה מימין,
+גרירה בכל מקום אחר מזיזה את המבט, נגיעה במשבצת בסרגל בוחרת בלוק.
 
 ### הרצה מהקוד
 

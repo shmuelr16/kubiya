@@ -12,7 +12,7 @@ config_version=5
 
 config/name="Kubiya"
 config/description="Original open-source 3D block sandbox game."
-config/version="0.1.0"
+config/version="0.3.0"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
@@ -23,6 +23,11 @@ window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/handheld/orientation=4
+
+[input_devices]
+
+pointing/emulate_mouse_from_touch=false
 
 [rendering]
 

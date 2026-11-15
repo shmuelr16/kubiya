@@ -23,7 +23,12 @@ Targets: macOS, Windows, Android, iOS, web. Public repository, MIT license.
 | `scripts/terrain.gd` | Terrain generator: height, caves, ores, trees. Thread-safe |
 | `scripts/mesher.gd` | Chunk to render arrays, hidden faces removed. Thread-safe |
 | `scripts/world.gd` | Chunk manager: worker threads, mesh upload, load and unload |
-| `scripts/player.gd` | First-person controller with its own block collision |
+| `scripts/player.gd` | First-person player: walk, jump, gravity, swim, block collision |
+| `scripts/interaction.gd` | Ray through blocks, outline, long-press mining with crack, placing |
+| `scripts/hotbar.gd` | Block slots: keys 1-9, wheel, tap |
+| `scripts/touch_ui.gd` | Virtual joystick, jump / mine / place buttons, drag to look |
+| `scripts/audio.gd` | Synthesised sound effects and generative music |
+| `scripts/selftest.gd` | Automated play test through simulated touch events |
 | `docs/` | Screenshot now. Later the GitHub Pages site |
 
 The scene tree is built in code. Keep `.tscn` files minimal.
@@ -50,6 +55,22 @@ The scene tree is built in code. Keep `.tscn` files minimal.
 - Load order is nearest first. Data radius is view distance + 1, unload at + 3.
   View distance: 8 chunks on desktop, 5 on mobile and web.
 
+## Player, input, audio
+
+- Input reaches the game in two ways. Keyboard and mouse are read in `player.gd`,
+  `interaction.gd` and `hotbar.gd`. Touch goes only through `touch_ui.gd`, which
+  exposes `move`, `jump`, `mine`, `place` and `take_look()`. New actions need both.
+- `emulate_mouse_from_touch` is off. Touches never arrive as mouse events.
+- `world.set_block()` is the only way to edit blocks. It copies the chunk array
+  (a worker may still read the old one), keeps edited chunks in memory after unload,
+  and queues an urgent re-mesh of the chunk and of the neighbour across a border.
+- Mining time is `Blocks.HARDNESS[id]` seconds. Negative means unbreakable.
+  Mined blocks vanish and hotbar blocks are endless until stage 4 adds an inventory.
+- Add a block: extend the enum, `TILE_OF`, `HARDNESS` and `PITCH` in `blocks.gd`,
+  and paint its tile in `make_atlas()`. The atlas has 16 tiles, 15 are used.
+- Audio is synthesised at startup on a thread, 22050 Hz mono. Music replays two
+  instrument samples at different pitches from a sequencer. Do not add audio files.
+
 ## Performance rules
 
 Target: 60 FPS on phones.
@@ -70,6 +91,7 @@ Godot is at `/Applications/Godot.app/Contents/MacOS/Godot` on the development Ma
 G=/Applications/Godot.app/Contents/MacOS/Godot
 $G --headless --path . --import          # after a clean clone or new assets
 $G --path .                              # play
+$G --path . -- --selftest=/tmp/kubiya                                   # play test, PASS/FAIL lines
 $G --path . -- --shot=/tmp/a.png                                        # spawn and stand
 $G --path . -- --shot=/tmp/f.png --pos=0,100,0 --look=-25,-90 --fly=20  # streaming
 $G --path . -- --shot=/tmp/c.png --cave --look=0,-90                    # inside a cave
@@ -78,8 +100,15 @@ $G --path . -- --shot=/tmp/m.png --pos=0,100,0 --look=-25,-90 --fly=20 --dist=5 
 
 `--shot` opens a real window, turns off vsync and player input, waits for the world
 to load, measures 5 seconds, saves a PNG, prints one `SHOT` line and quits.
-Check after every change: no script errors, `floor=true` in the first command,
-the PNGs look right, and `run fps` and `worst frame` did not get worse.
+`--selftest` plays the game with simulated touches: joystick, look, jump, mining,
+placing, swimming, music. It must end with `SELFTEST ALL PASS`. It writes
+`PATH_crack.png` and `PATH_placed.png`. Add a check there for every new mechanic.
+
+Check after every change: no script errors, `SELFTEST ALL PASS`, `floor=true` in
+the first `--shot` command, the PNGs look right, and `run fps` and `worst frame`
+did not get worse. FPS numbers swing a lot when the Mac is busy: compare against
+the previous commit in the same minute before calling something a regression.
+A run can hang if a script fails to load, so run tests with a timeout.
 
 Reference on the development Mac (Intel Iris, 2560x1600), stage 2:
 load about 3.5 s, 105 to 155 FPS, worst frame after load 14 to 25 ms.

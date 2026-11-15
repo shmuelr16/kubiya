@@ -44,6 +44,10 @@ class Chunk:
 	var state := S_GENERATING
 	var node: MeshInstance3D
 	var quads := 0
+	## An edit arrived after the last mesh job started.
+	var dirty := false
+	## A re-mesh job is running for an already visible chunk.
+	var meshing := false
 
 
 var world_seed := 1337
@@ -52,6 +56,7 @@ var focus := Vector3.ZERO
 var terrain: Terrain
 var chunks := {}
 var total_quads := 0
+var atlas: ImageTexture
 var use_threads := true
 var max_tasks := 2
 
@@ -67,6 +72,9 @@ var _sem := Semaphore.new()
 var _quit := false
 var _results := []
 var _uploads := []
+var _dirty: Array[Vector2i] = []
+## Edited chunks, kept after unload: Vector2i -> [data, max_y].
+var _modified := {}
 var _mutex := Mutex.new()
 
 
@@ -84,7 +92,8 @@ func _ready() -> void:
 	solid.code = SOLID_SHADER
 	_mat_solid = ShaderMaterial.new()
 	_mat_solid.shader = solid
-	_mat_solid.set_shader_parameter("atlas", Blocks.make_atlas())
+	atlas = Blocks.make_atlas()
+	_mat_solid.set_shader_parameter("atlas", atlas)
 	var water := Shader.new()
 	water.code = WATER_SHADER
 	_mat_water = ShaderMaterial.new()
@@ -126,12 +135,76 @@ func _process(_delta: float) -> void:
 		_center = pc
 		_unload_far()
 		_pending = true
+	if not _dirty.is_empty():
+		_remesh()
 	if _pending:
 		_schedule()
 
 
 func is_idle() -> bool:
-	return not _pending and _active == 0 and _uploads.is_empty()
+	return not _pending and _active == 0 and _uploads.is_empty() and _dirty.is_empty()
+
+
+## Changes one block and re-meshes the chunks that show it.
+## Returns false when the position is outside the loaded world.
+func set_block(x: int, y: int, z: int, id: int) -> bool:
+	if y < 0 or y >= SY:
+		return false
+	var pos := Vector2i(x >> 4, z >> 4)
+	var c: Chunk = chunks.get(pos)
+	if c == null or c.state == S_GENERATING:
+		return false
+	var lx := x & 15
+	var lz := z & 15
+	# Copy on edit: a worker thread may still be reading the old array.
+	var d := c.data.duplicate()
+	d[((lx + lz * CS) << 7) + y] = id
+	c.data = d
+	c.max_y = maxi(c.max_y, y)
+	_modified[pos] = [d, c.max_y]
+	_mark_dirty(pos)
+	if lx == 0:
+		_mark_dirty(pos + Vector2i(-1, 0))
+	elif lx == 15:
+		_mark_dirty(pos + Vector2i(1, 0))
+	if lz == 0:
+		_mark_dirty(pos + Vector2i(0, -1))
+	elif lz == 15:
+		_mark_dirty(pos + Vector2i(0, 1))
+	return true
+
+
+func _mark_dirty(pos: Vector2i) -> void:
+	var c: Chunk = chunks.get(pos)
+	if c == null or c.state == S_GENERATING or c.state == S_DATA:
+		return
+	c.dirty = true
+	if not _dirty.has(pos):
+		_dirty.append(pos)
+
+
+## Starts priority mesh jobs for edited chunks. The old mesh stays until the new one is ready.
+func _remesh() -> void:
+	for pos: Vector2i in _dirty.duplicate():
+		var c: Chunk = chunks.get(pos)
+		if c == null or not c.dirty:
+			_dirty.erase(pos)
+			continue
+		if c.meshing or c.state != S_READY:
+			continue
+		var nx: Chunk = chunks.get(pos + Vector2i(-1, 0))
+		var px: Chunk = chunks.get(pos + Vector2i(1, 0))
+		var nz: Chunk = chunks.get(pos + Vector2i(0, -1))
+		var pz: Chunk = chunks.get(pos + Vector2i(0, 1))
+		if nx == null or px == null or nz == null or pz == null:
+			continue
+		if nx.state == S_GENERATING or px.state == S_GENERATING \
+				or nz.state == S_GENERATING or pz.state == S_GENERATING:
+			continue
+		c.dirty = false
+		c.meshing = true
+		_dirty.erase(pos)
+		_start(_job_mesh.bind(pos, c.data, nx.data, px.data, nz.data, pz.data, c.max_y), true)
 
 
 ## Block id at a world position, or -1 when the chunk is not loaded yet.
@@ -164,6 +237,11 @@ func _schedule() -> void:
 				break
 			c = Chunk.new()
 			chunks[pos] = c
+			if _modified.has(pos):
+				c.data = _modified[pos][0]
+				c.max_y = _modified[pos][1]
+				c.state = S_DATA
+				continue
 			_start(_job_gen.bind(pos))
 		elif c.state == S_DATA:
 			if off.length_squared() > r2:
@@ -187,11 +265,14 @@ func _schedule() -> void:
 	_pending = not all_done
 
 
-func _start(job: Callable) -> void:
+func _start(job: Callable, urgent := false) -> void:
 	_active += 1
 	if use_threads and not _threads.is_empty():
 		_mutex.lock()
-		_jobs.append(job)
+		if urgent:
+			_jobs.push_front(job)
+		else:
+			_jobs.append(job)
 		_mutex.unlock()
 		_sem.post()
 	else:
@@ -242,6 +323,8 @@ func _drain() -> void:
 				c.state = S_DATA
 		elif c.state == S_MESHING:
 			_uploads.append(r)
+		elif c.meshing:
+			_uploads.push_front(r)
 
 
 func _upload() -> void:
@@ -250,15 +333,23 @@ func _upload() -> void:
 		var r: Array = _uploads.pop_front()
 		var pos: Vector2i = r[1]
 		var c: Chunk = chunks.get(pos)
-		if c == null or c.state != S_MESHING:
+		if c == null or (c.state != S_MESHING and not c.meshing):
 			continue
 		_build_node(c, pos, r[2])
 		c.state = S_READY
+		c.meshing = false
+		if c.dirty and not _dirty.has(pos):
+			_dirty.append(pos)
 		if Time.get_ticks_usec() - t0 > UPLOAD_BUDGET_USEC:
 			break
 
 
 func _build_node(c: Chunk, pos: Vector2i, m: Dictionary) -> void:
+	if c.node != null:
+		c.node.queue_free()
+		c.node = null
+	total_quads -= c.quads
+	c.quads = 0
 	var sv: PackedVector3Array = m["sv"]
 	var wv: PackedVector3Array = m["wv"]
 	if sv.is_empty() and wv.is_empty():
