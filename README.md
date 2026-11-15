@@ -12,14 +12,14 @@ The name, textures, sounds and music are original. Textures are generated in cod
 
 ## Status
 
-Early development. Stage 1 is done: project skeleton, generated terrain with trees,
-first-person walking.
+Early development. Stages 1 and 2 are done: an endless generated world with hills,
+sea, caves, trees and ores, streamed in chunks around the player.
 
 | Stage | Content | State |
 |-------|---------|-------|
 | 1 | Repository, project skeleton, terrain, walking | Done |
-| 2 | Endless chunked world, mining and building, hotbar | Planned |
-| 3 | Inventory, crafting, save and load | Planned |
+| 2 | Endless world: 16x16x128 chunks, hills, water, caves, trees, ores, streaming | Done |
+| 3 | Mining and building, hotbar, inventory, crafting, save and load | Planned |
 | 4 | Day and night, monsters, health | Planned |
 | 5 | Original sounds and music, touch controls, menus | Planned |
 | 6 | Builds: macOS `.dmg`, Windows, Android APK, iOS, web | Planned |
@@ -31,7 +31,7 @@ first-person walking.
 |--------|-----|
 | Move | W A S D or arrow keys |
 | Look | Mouse (click the window first) |
-| Jump | Space |
+| Jump / swim up | Space |
 | Run | Shift |
 | Release mouse | Esc |
 
@@ -61,13 +61,13 @@ MIT. See [LICENSE](LICENSE).
 
 ### מצב
 
-פיתוח מוקדם. שלב 1 הושלם: שלד הפרויקט, עולם עם גבעות ועצים, הליכה בגוף ראשון.
+פיתוח מוקדם. שלבים 1 ו־2 הושלמו: עולם אינסופי עם גבעות, ים, מערות, עצים ועפרות, שנטען בצ'אנקים סביב השחקן.
 
 | שלב | תוכן | מצב |
 |-----|------|-----|
 | 1 | ריפו, שלד הפרויקט, עולם, הליכה | בוצע |
-| 2 | עולם אינסופי בצ'אנקים, כרייה ובנייה, סרגל חפצים | מתוכנן |
-| 3 | מלאי, יצירת חפצים, שמירה וטעינה | מתוכנן |
+| 2 | עולם אינסופי: צ'אנקים 16x16x128, גבעות, מים, מערות, עצים, עפרות, טעינה דינמית | בוצע |
+| 3 | כרייה ובנייה, סרגל חפצים, מלאי, יצירת חפצים, שמירה וטעינה | מתוכנן |
 | 4 | יום ולילה, מפלצות, חיים | מתוכנן |
 | 5 | צלילים ומוזיקה מקוריים, שליטה במגע, תפריטים | מתוכנן |
 | 6 | גרסאות: מק (`.dmg`), ווינדוס, אנדרואיד (APK), אייפון, דפדפן | מתוכנן |
@@ -79,7 +79,7 @@ MIT. See [LICENSE](LICENSE).
 |-------|-----|
 | תנועה | W A S D או מקשי החצים |
 | מבט | עכבר (קודם לוחצים על החלון) |
-| קפיצה | רווח |
+| קפיצה / שחייה למעלה | רווח |
 | ריצה | Shift |
 | שחרור העכבר | Esc |
 

@@ -18,19 +18,49 @@ Targets: macOS, Windows, Android, iOS, web. Public repository, MIT license.
 |------|---------|
 | `project.godot` | Engine configuration |
 | `scenes/main.tscn` | The only scene. One node with `main.gd` |
-| `scripts/main.gd` | Entry point. Builds sky, sun, world, player, HUD. Screenshot hook |
+| `scripts/main.gd` | Entry point. Builds sky, fog, world, player, HUD. Test arguments |
 | `scripts/blocks.gd` | Block ids, face-to-tile table, procedural texture atlas |
-| `scripts/world.gd` | Block data, terrain generation, chunk meshing and collision |
-| `scripts/player.gd` | First-person controller |
+| `scripts/terrain.gd` | Terrain generator: height, caves, ores, trees. Thread-safe |
+| `scripts/mesher.gd` | Chunk to render arrays, hidden faces removed. Thread-safe |
+| `scripts/world.gd` | Chunk manager: worker threads, mesh upload, load and unload |
+| `scripts/player.gd` | First-person controller with its own block collision |
 | `docs/` | Screenshot now. Later the GitHub Pages site |
 
 The scene tree is built in code. Keep `.tscn` files minimal.
 
-World data is one `PackedByteArray`, index `x + SX * (z + SZ * y)`.
-Each 16x16 column chunk is one `ArrayMesh` plus one trimesh collision shape.
-Quad winding: `FACE_DEFS` holds `u` and `v` with `u x v = normal`, and corners
-go `o, o+v, o+u+v, o+u`. That order is clockwise from outside, which Godot draws
-as the front face.
+## World
+
+- Chunk: 16 x 16 x 128 blocks, one byte each, in a `PackedByteArray`.
+  Index: `((x + z * 16) << 7) + y`. Neighbours: y is +-1, x is +-128, z is +-2048.
+- `terrain.gd` is a pure function of seed and position. A chunk never needs its
+  neighbours to generate. Trees use a per-column hash and a 2-block margin, so
+  canopies cross chunk borders. Keep new generation features pure in the same way.
+- Sea level is 62. Caves are where two 3D noises are both near zero. Columns at or
+  near sea level keep a 5-block cap, so water never touches a cave. Water does not flow.
+- A chunk is meshed only when its 4 side neighbours have data. A face is drawn when
+  the neighbour is air, or water next to a solid block. Leaves are opaque.
+- One `ArrayMesh` per chunk: surface for solids, surface for water.
+  Vertex data: position, UV, colour. No normals: both shaders are unshaded and the
+  per-face shade is baked into vertex colour. `daylight` is a shader uniform.
+- Quad winding: `FACE_DEFS` holds `u` and `v` with `u x v = normal`, and corners
+  go `o, o+v, o+u+v, o+u`. That order is clockwise from outside, which Godot draws
+  as the front face.
+- Terrain has no physics shapes. `player.gd` tests its box against blocks through
+  `world.is_solid()`. Chunks that are not loaded count as solid.
+- Load order is nearest first. Data radius is view distance + 1, unload at + 3.
+  View distance: 8 chunks on desktop, 5 on mobile and web.
+
+## Performance rules
+
+Target: 60 FPS on phones.
+
+- Do not use `WorkerThreadPool` for chunk jobs. The engine shares that pool, and
+  long jobs in it stalled the main thread for 400 to 850 ms. `world.gd` owns its threads.
+- Worker code must not touch nodes or resources. Meshes are created on the main
+  thread, inside a 3 ms per frame budget.
+- Builds without thread support (web) run one job per frame on the main thread.
+- No per-chunk collision meshes, no lit materials, no per-block nodes.
+- Measure before and after any change to `mesher.gd`, `terrain.gd` or `world.gd`.
 
 ## Run and verify
 
@@ -40,11 +70,21 @@ Godot is at `/Applications/Godot.app/Contents/MacOS/Godot` on the development Ma
 G=/Applications/Godot.app/Contents/MacOS/Godot
 $G --headless --path . --import          # after a clean clone or new assets
 $G --path .                              # play
-$G --path . -- --shot=/tmp/kubiya.png    # render 90 frames, save a PNG, quit
+$G --path . -- --shot=/tmp/a.png                                        # spawn and stand
+$G --path . -- --shot=/tmp/f.png --pos=0,100,0 --look=-25,-90 --fly=20  # streaming
+$G --path . -- --shot=/tmp/c.png --cave --look=0,-90                    # inside a cave
+$G --path . -- --shot=/tmp/m.png --pos=0,100,0 --look=-25,-90 --fly=20 --dist=5 --nothreads  # phone-like
 ```
 
-After every change run the `--shot` command, check that it prints no script errors,
-and look at the PNG. The line it prints includes `on_floor=true` when collision works.
+`--shot` opens a real window, turns off vsync and player input, waits for the world
+to load, measures 5 seconds, saves a PNG, prints one `SHOT` line and quits.
+Check after every change: no script errors, `floor=true` in the first command,
+the PNGs look right, and `run fps` and `worst frame` did not get worse.
+
+Reference on the development Mac (Intel Iris, 2560x1600), stage 2:
+load about 3.5 s, 105 to 155 FPS, worst frame after load 14 to 25 ms.
+One frame of 300 to 400 ms happens during startup; its cause is not confirmed.
+No phone has been measured yet.
 
 ## Build
 

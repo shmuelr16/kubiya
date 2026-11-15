@@ -1,168 +1,301 @@
-extends StaticBody3D
-## Fixed-size block world, meshed per 16x16 column chunk.
+extends Node3D
+## Chunk manager. Streams 16x16x128 chunks around a focus point: generates and
+## meshes them on worker threads, uploads meshes on the main thread within a
+## time budget, and frees chunks that fall out of range.
+##
+## Uses its own threads, not WorkerThreadPool: the engine shares that pool, and
+## long jobs in it stall the main thread for hundreds of milliseconds.
 
 const Blocks := preload("res://scripts/blocks.gd")
+const Terrain := preload("res://scripts/terrain.gd")
+const Mesher := preload("res://scripts/mesher.gd")
 
-const CHUNK := 16
-const CHUNKS := 4
-const SX := CHUNK * CHUNKS
-const SZ := CHUNK * CHUNKS
-const SY := 48
-const UV_PAD := 0.002
+const CS := 16
+const SY := 128
+const UPLOAD_BUDGET_USEC := 3000
 
-## normal, origin, u, v (u x v = normal), which axis is Y (0 none, 1 u, 2 v),
-## tile slot (0 top, 1 side, 2 bottom), shade.
-const FACE_DEFS := [
-	[Vector3i(1, 0, 0), Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1), 1, 1, 0.80],
-	[Vector3i(-1, 0, 0), Vector3(0, 0, 0), Vector3(0, 0, 1), Vector3(0, 1, 0), 2, 1, 0.80],
-	[Vector3i(0, 1, 0), Vector3(0, 1, 0), Vector3(0, 0, 1), Vector3(1, 0, 0), 0, 0, 1.00],
-	[Vector3i(0, -1, 0), Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(0, 0, 1), 0, 2, 0.50],
-	[Vector3i(0, 0, 1), Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(0, 1, 0), 2, 1, 0.66],
-	[Vector3i(0, 0, -1), Vector3(0, 0, 0), Vector3(0, 1, 0), Vector3(1, 0, 0), 1, 1, 0.66],
-]
-## Quad corners as (u, v) multipliers; clockwise seen from outside.
-const CORNERS := [Vector2(0, 0), Vector2(0, 1), Vector2(1, 1), Vector2(1, 0)]
+enum { S_GENERATING, S_DATA, S_MESHING, S_READY }
 
-var data := PackedByteArray()
-var material: StandardMaterial3D
+const SOLID_SHADER := "
+shader_type spatial;
+render_mode unshaded, cull_back;
+uniform sampler2D atlas : source_color, filter_nearest, repeat_disable;
+uniform float daylight = 1.0;
+void fragment() {
+	ALBEDO = texture(atlas, UV).rgb * COLOR.rgb * daylight;
+}
+"
+
+const WATER_SHADER := "
+shader_type spatial;
+render_mode unshaded, cull_disabled, blend_mix, depth_draw_never;
+uniform vec3 tint : source_color = vec3(0.16, 0.42, 0.78);
+uniform float daylight = 1.0;
+void fragment() {
+	ALBEDO = tint * daylight;
+	ALPHA = 0.68;
+}
+"
+
+
+class Chunk:
+	var data: PackedByteArray
+	var max_y := 0
+	var state := S_GENERATING
+	var node: MeshInstance3D
+	var quads := 0
+
+
 var world_seed := 1337
+var view_dist := 8
+var focus := Vector3.ZERO
+var terrain: Terrain
+var chunks := {}
+var total_quads := 0
+var use_threads := true
+var max_tasks := 2
+
+var _mat_solid: ShaderMaterial
+var _mat_water: ShaderMaterial
+var _offsets: Array[Vector2i] = []
+var _center := Vector2i(1 << 30, 1 << 30)
+var _pending := true
+var _active := 0
+var _threads: Array[Thread] = []
+var _jobs: Array[Callable] = []
+var _sem := Semaphore.new()
+var _quit := false
+var _results := []
+var _uploads := []
+var _mutex := Mutex.new()
 
 
 func _ready() -> void:
-	material = StandardMaterial3D.new()
-	material.albedo_texture = Blocks.make_atlas()
-	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	material.vertex_color_use_as_albedo = true
-	material.roughness = 1.0
-	generate()
-	for cz in CHUNKS:
-		for cx in CHUNKS:
-			_build_chunk(cx, cz)
+	terrain = Terrain.new(world_seed)
+	use_threads = OS.has_feature("threads") and OS.get_processor_count() > 1
+	max_tasks = clampi(OS.get_processor_count() - 2, 1, 4) if use_threads else 1
+	if use_threads:
+		for i in max_tasks:
+			var t := Thread.new()
+			t.start(_worker)
+			_threads.append(t)
+
+	var solid := Shader.new()
+	solid.code = SOLID_SHADER
+	_mat_solid = ShaderMaterial.new()
+	_mat_solid.shader = solid
+	_mat_solid.set_shader_parameter("atlas", Blocks.make_atlas())
+	var water := Shader.new()
+	water.code = WATER_SHADER
+	_mat_water = ShaderMaterial.new()
+	_mat_water.shader = water
+
+	set_view_distance(view_dist)
 
 
+func set_view_distance(d: int) -> void:
+	view_dist = d
+	_offsets.clear()
+	var r := d + 1
+	for z in range(-r, r + 1):
+		for x in range(-r, r + 1):
+			if x * x + z * z <= r * r:
+				_offsets.append(Vector2i(x, z))
+	_offsets.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return a.length_squared() < b.length_squared())
+	_pending = true
+
+
+func _exit_tree() -> void:
+	_mutex.lock()
+	_quit = true
+	_jobs.clear()
+	_mutex.unlock()
+	for t in _threads:
+		_sem.post()
+	for t in _threads:
+		t.wait_to_finish()
+	_threads.clear()
+
+
+func _process(_delta: float) -> void:
+	_drain()
+	_upload()
+	var pc := Vector2i(floori(focus.x) >> 4, floori(focus.z) >> 4)
+	if pc != _center:
+		_center = pc
+		_unload_far()
+		_pending = true
+	if _pending:
+		_schedule()
+
+
+func is_idle() -> bool:
+	return not _pending and _active == 0 and _uploads.is_empty()
+
+
+## Block id at a world position, or -1 when the chunk is not loaded yet.
 func get_block(x: int, y: int, z: int) -> int:
 	if y < 0:
-		return Blocks.STONE
-	if x < 0 or z < 0 or x >= SX or z >= SZ or y >= SY:
+		return Blocks.BEDROCK
+	if y >= SY:
 		return Blocks.AIR
-	return data[x + SX * (z + SZ * y)]
+	var c: Chunk = chunks.get(Vector2i(x >> 4, z >> 4))
+	if c == null or c.state == S_GENERATING:
+		return -1
+	return c.data[(((x & 15) + (z & 15) * CS) << 7) + y]
 
 
-func set_block(x: int, y: int, z: int, id: int) -> void:
-	if x < 0 or y < 0 or z < 0 or x >= SX or y >= SY or z >= SZ:
+## Unloaded chunks count as solid, so nothing falls through missing terrain.
+func is_solid(x: int, y: int, z: int) -> bool:
+	var id := get_block(x, y, z)
+	return id != Blocks.AIR and id != Blocks.WATER
+
+
+func _schedule() -> void:
+	var all_done := true
+	var r2 := view_dist * view_dist
+	for off in _offsets:
+		var pos := _center + off
+		var c: Chunk = chunks.get(pos)
+		if c == null:
+			all_done = false
+			if _active >= max_tasks:
+				break
+			c = Chunk.new()
+			chunks[pos] = c
+			_start(_job_gen.bind(pos))
+		elif c.state == S_DATA:
+			if off.length_squared() > r2:
+				continue
+			all_done = false
+			var nx: Chunk = chunks.get(pos + Vector2i(-1, 0))
+			var px: Chunk = chunks.get(pos + Vector2i(1, 0))
+			var nz: Chunk = chunks.get(pos + Vector2i(0, -1))
+			var pz: Chunk = chunks.get(pos + Vector2i(0, 1))
+			if nx == null or px == null or nz == null or pz == null:
+				continue
+			if nx.state == S_GENERATING or px.state == S_GENERATING \
+					or nz.state == S_GENERATING or pz.state == S_GENERATING:
+				continue
+			if _active >= max_tasks:
+				break
+			c.state = S_MESHING
+			_start(_job_mesh.bind(pos, c.data, nx.data, px.data, nz.data, pz.data, c.max_y))
+		elif c.state != S_READY:
+			all_done = false
+	_pending = not all_done
+
+
+func _start(job: Callable) -> void:
+	_active += 1
+	if use_threads and not _threads.is_empty():
+		_mutex.lock()
+		_jobs.append(job)
+		_mutex.unlock()
+		_sem.post()
+	else:
+		job.call()
+
+
+func _worker() -> void:
+	while true:
+		_sem.wait()
+		_mutex.lock()
+		if _quit:
+			_mutex.unlock()
+			return
+		var job: Callable = _jobs.pop_front()
+		_mutex.unlock()
+		job.call()
+
+
+func _job_gen(pos: Vector2i) -> void:
+	var r := terrain.generate(pos.x, pos.y)
+	_mutex.lock()
+	_results.append([0, pos, r])
+	_mutex.unlock()
+
+
+func _job_mesh(pos: Vector2i, d: PackedByteArray, nx: PackedByteArray,
+		px: PackedByteArray, nz: PackedByteArray, pz: PackedByteArray, max_y: int) -> void:
+	var r := Mesher.new().build(d, nx, px, nz, pz, max_y)
+	_mutex.lock()
+	_results.append([1, pos, r])
+	_mutex.unlock()
+
+
+func _drain() -> void:
+	_mutex.lock()
+	var done := _results
+	_results = []
+	_mutex.unlock()
+	for r: Array in done:
+		_active -= 1
+		var c: Chunk = chunks.get(r[1])
+		if c == null:
+			continue
+		if r[0] == 0:
+			if c.state == S_GENERATING:
+				c.data = r[2]["data"]
+				c.max_y = r[2]["max_y"]
+				c.state = S_DATA
+		elif c.state == S_MESHING:
+			_uploads.append(r)
+
+
+func _upload() -> void:
+	var t0 := Time.get_ticks_usec()
+	while not _uploads.is_empty():
+		var r: Array = _uploads.pop_front()
+		var pos: Vector2i = r[1]
+		var c: Chunk = chunks.get(pos)
+		if c == null or c.state != S_MESHING:
+			continue
+		_build_node(c, pos, r[2])
+		c.state = S_READY
+		if Time.get_ticks_usec() - t0 > UPLOAD_BUDGET_USEC:
+			break
+
+
+func _build_node(c: Chunk, pos: Vector2i, m: Dictionary) -> void:
+	var sv: PackedVector3Array = m["sv"]
+	var wv: PackedVector3Array = m["wv"]
+	if sv.is_empty() and wv.is_empty():
 		return
-	data[x + SX * (z + SZ * y)] = id
-
-
-func surface_y(x: int, z: int) -> int:
-	for y in range(SY - 1, -1, -1):
-		if get_block(x, y, z) != Blocks.AIR:
-			return y
-	return 0
-
-
-func generate() -> void:
-	data.resize(SX * SY * SZ)
-	data.fill(Blocks.AIR)
-	var noise := FastNoiseLite.new()
-	noise.seed = world_seed
-	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	noise.frequency = 0.02
-	noise.fractal_octaves = 3
-
-	for z in SZ:
-		for x in SX:
-			var h := clampi(int(16.0 + noise.get_noise_2d(x, z) * 10.0), 2, SY - 12)
-			var top := Blocks.SAND if h <= 12 else Blocks.GRASS
-			for y in h + 1:
-				var id := Blocks.STONE
-				if y == h:
-					id = top
-				elif y >= h - 3:
-					id = Blocks.SAND if top == Blocks.SAND else Blocks.DIRT
-				set_block(x, y, z, id)
-
-	var rng := RandomNumberGenerator.new()
-	rng.seed = world_seed
-	for i in 22:
-		var tx := rng.randi_range(3, SX - 4)
-		var tz := rng.randi_range(3, SZ - 4)
-		var ty := surface_y(tx, tz)
-		if get_block(tx, ty, tz) == Blocks.GRASS:
-			_plant_tree(tx, ty + 1, tz, rng.randi_range(4, 6))
-
-
-func _plant_tree(x: int, y: int, z: int, height: int) -> void:
-	for dy in range(height - 2, height + 2):
-		var r := 2 if dy < height else 1
-		for dz in range(-r, r + 1):
-			for dx in range(-r, r + 1):
-				if absi(dx) == r and absi(dz) == r and r == 2:
-					continue
-				if get_block(x + dx, y + dy, z + dz) == Blocks.AIR:
-					set_block(x + dx, y + dy, z + dz, Blocks.LEAVES)
-	for dy in height:
-		set_block(x, y + dy, z, Blocks.WOOD)
-
-
-func _build_chunk(cx: int, cz: int) -> void:
-	var verts := PackedVector3Array()
-	var normals := PackedVector3Array()
-	var uvs := PackedVector2Array()
-	var colors := PackedColorArray()
-	var indices := PackedInt32Array()
-	var inv := 1.0 / Blocks.ATLAS_TILES
-
-	for y in SY:
-		for z in range(cz * CHUNK, (cz + 1) * CHUNK):
-			for x in range(cx * CHUNK, (cx + 1) * CHUNK):
-				var id := get_block(x, y, z)
-				if id == Blocks.AIR:
-					continue
-				var tiles: Array = Blocks.FACES[id]
-				var base := Vector3(x, y, z)
-				for f: Array in FACE_DEFS:
-					var n: Vector3i = f[0]
-					if get_block(x + n.x, y + n.y, z + n.z) != Blocks.AIR:
-						continue
-					var origin: Vector3 = f[1]
-					var u: Vector3 = f[2]
-					var v: Vector3 = f[3]
-					var y_axis: int = f[4]
-					var tile: int = tiles[f[5]]
-					var shade: float = f[6]
-					var tile_uv := Vector2(tile % Blocks.ATLAS_TILES, floori(tile * inv))
-					var start := verts.size()
-					for c: Vector2 in CORNERS:
-						verts.append(base + origin + u * c.x + v * c.y)
-						normals.append(Vector3(n))
-						colors.append(Color(shade, shade, shade))
-						var st := c
-						if y_axis == 1:
-							st = Vector2(c.y, 1.0 - c.x)
-						elif y_axis == 2:
-							st = Vector2(c.x, 1.0 - c.y)
-						st = st.clamp(Vector2(UV_PAD, UV_PAD), Vector2(1.0 - UV_PAD, 1.0 - UV_PAD))
-						uvs.append((tile_uv + st) * inv)
-					indices.append_array([start, start + 1, start + 2, start, start + 2, start + 3])
-
-	if verts.is_empty():
-		return
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = verts
-	arrays[Mesh.ARRAY_NORMAL] = normals
-	arrays[Mesh.ARRAY_TEX_UV] = uvs
-	arrays[Mesh.ARRAY_COLOR] = colors
-	arrays[Mesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	mesh.surface_set_material(0, material)
-
+	if not sv.is_empty():
+		var a := []
+		a.resize(Mesh.ARRAY_MAX)
+		a[Mesh.ARRAY_VERTEX] = sv
+		a[Mesh.ARRAY_TEX_UV] = m["su"]
+		a[Mesh.ARRAY_COLOR] = m["sc"]
+		a[Mesh.ARRAY_INDEX] = m["si"]
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
+		mesh.surface_set_material(mesh.get_surface_count() - 1, _mat_solid)
+	if not wv.is_empty():
+		var a := []
+		a.resize(Mesh.ARRAY_MAX)
+		a[Mesh.ARRAY_VERTEX] = wv
+		a[Mesh.ARRAY_INDEX] = m["wi"]
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
+		mesh.surface_set_material(mesh.get_surface_count() - 1, _mat_water)
 	var mi := MeshInstance3D.new()
-	mi.name = "Chunk_%d_%d" % [cx, cz]
 	mi.mesh = mesh
+	mi.position = Vector3(pos.x * CS, 0, pos.y * CS)
 	add_child(mi)
-	var col := CollisionShape3D.new()
-	col.shape = mesh.create_trimesh_shape()
-	add_child(col)
+	c.node = mi
+	@warning_ignore("integer_division")
+	c.quads = (sv.size() + wv.size()) / 4
+	total_quads += c.quads
+
+
+func _unload_far() -> void:
+	var limit := (view_dist + 3) * (view_dist + 3)
+	for pos: Vector2i in chunks.keys():
+		if (pos - _center).length_squared() > limit:
+			var c: Chunk = chunks[pos]
+			if c.node != null:
+				c.node.queue_free()
+			total_quads -= c.quads
+			chunks.erase(pos)
