@@ -1,0 +1,17 @@
+# Godot 4
+.godot/
+*.translation
+.import/
+export_credentials.cfg
+*.keystore
+*.jks
+
+# Build output
+build/
+dist/
+android/
+
+# OS
+.DS_Store
+Icon?
+Thumbs.db
